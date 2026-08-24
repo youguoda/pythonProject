@@ -1,10 +1,35 @@
 # -*- coding: utf-8 -*-
 """常量定义"""
 
-APP_NAME = "Gamepad Mapper"
-APP_VERSION = "1.0.0"
+APP_NAME = "Gamepad Vibe Controller"
+APP_VERSION = "2.0.0"
 CONFIG_DIR = "config"
 CONFIG_FILE = "mapping.json"
+
+PROFILE_ORDER = [
+    "cursor", "claude_code", "codex", "zcode", "dsh",
+    "browser", "general",
+]
+
+# 特殊映射动作（非键盘）
+MOUSE_LEFT = "@mouse:left"
+MOUSE_RIGHT = "@mouse:right"
+VOICE_KEY = "ctrl_r"
+
+# 全方案统一的鼠标层（左摇杆移动 / 右摇杆滚轮在引擎内；此处为 L3/R3）
+UNIVERSAL_MOUSE_MAPPINGS = {
+    10: MOUSE_LEFT,
+    11: MOUSE_RIGHT,
+}
+
+DEFAULT_MOUSE_SENSITIVITY = 20.0
+DEFAULT_STICK_DEADZONE = 0.15
+DEFAULT_SCROLL_SENSITIVITY = 0.35
+MOUSE_SENSITIVITY_MIN = 5.0
+MOUSE_SENSITIVITY_MAX = 50.0
+SCROLL_SENSITIVITY_MIN = 0.1
+SCROLL_SENSITIVITY_MAX = 2.0
+LT_LONG_PRESS_SEC = 0.4
 
 BUTTON_NAMES = [
     "A", "B", "X", "Y",
@@ -20,9 +45,11 @@ KEYBOARD_KEYS = [
     "n", "o", "p", "q", "r", "s", "t", "u", "v", "w", "x", "y", "z",
     "0", "1", "2", "3", "4", "5", "6", "7", "8", "9",
     "space", "enter", "tab", "backspace", "delete",
+    "pageup", "pagedown",
     "left", "right", "up", "down",
     "f1", "f2", "f3", "f4", "f5", "f6", "f7", "f8", "f9", "f10", "f11", "f12",
     "shift", "ctrl", "alt",
+    "cmd", "win", "super", "cmd_l", "cmd_r",
     "ctrl_l", "ctrl_r", "shift_l", "shift_r", "alt_l", "alt_r",
     "[", "]", "(", ")", "{", "}", ";", "'", ",", ".", "/", "\\", "-", "=", "`",
 ]

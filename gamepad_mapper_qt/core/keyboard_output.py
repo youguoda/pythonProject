@@ -16,7 +16,15 @@ class KeyboardOutput:
 
     @staticmethod
     def _resolve_key(key_name: str):
-        attr = key_name.replace("-", "_")
+        aliases = {
+            "pageup": "page_up",
+            "pagedown": "page_down",
+            "win": "cmd",
+            "super": "cmd",
+            "windows": "cmd",
+            "cmd_l": "cmd",
+        }
+        attr = aliases.get(key_name, key_name.replace("-", "_"))
         if hasattr(Key, attr):
             return getattr(Key, attr)
         return key_name

@@ -7,6 +7,7 @@ from typing import List, Optional, Tuple
 
 import pygame
 
+from core.button_map import apply_hardware_buttons, detect_layout
 from core.constants import BUTTON_NAMES, DEFAULT_THRESHOLD
 
 
@@ -30,6 +31,7 @@ class JoystickManager:
         self._name = ""
         self._threshold = threshold
         self._initialized = False
+        self._layout = "xbox"
 
     @property
     def threshold(self) -> float:
@@ -76,13 +78,14 @@ class JoystickManager:
                 js.init()
                 self._joystick = js
                 self._name = js.get_name()
+                self._layout = detect_layout(self._name)
                 return True
             except pygame.error:
                 self._joystick = None
                 return False
 
     def poll(self) -> PollResult:
-        """读取当前 24 项按键/方向状态"""
+        """读取当前 24 项按键/方向状态（Xbox 硬件已校正到逻辑槽）"""
         with self._lock:
             result = PollResult()
             js = self._joystick
@@ -93,8 +96,12 @@ class JoystickManager:
             thr = self._threshold
             pressed = result.pressed
 
-            for bi in range(min(js.get_numbuttons(), 12)):
-                pressed[bi] = bool(js.get_button(bi))
+            apply_hardware_buttons(
+                pressed,
+                js.get_button,
+                js.get_numbuttons(),
+                self._layout,
+            )
 
             if js.get_numhats() > 0:
                 hx, hy = js.get_hat(0)

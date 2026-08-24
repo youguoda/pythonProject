@@ -1,29 +1,90 @@
 # -*- coding: utf-8 -*-
-"""配置持久化"""
+"""配置与 Harness Profile 持久化"""
 
 import json
 import os
-from typing import Dict
+from dataclasses import dataclass, field
+from typing import Dict, List, Optional
 
-from core.constants import CONFIG_DIR, CONFIG_FILE, DEFAULT_THRESHOLD
+from core.constants import (
+    CONFIG_DIR,
+    DEFAULT_MOUSE_SENSITIVITY,
+    DEFAULT_SCROLL_SENSITIVITY,
+    DEFAULT_STICK_DEADZONE,
+    DEFAULT_THRESHOLD,
+    PROFILE_ORDER,
+    UNIVERSAL_MOUSE_MAPPINGS,
+)
+
+PROFILES_DIR = "profiles"
+APP_STATE_FILE = "app_state.json"
 
 
-def _config_path() -> str:
-    base = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    return os.path.join(base, CONFIG_DIR, CONFIG_FILE)
+@dataclass
+class AppState:
+    active_profile: str = PROFILE_ORDER[0]
+    launch_at_startup: bool = False
+    auto_start_mapping: bool = False
 
 
-def load_config() -> tuple[Dict[int, str], float]:
-    """加载映射配置，返回 (mappings, threshold)"""
-    path = _config_path()
+@dataclass
+class HarnessProfile:
+    id: str
+    display_name: str
+    process_names: List[str] = field(default_factory=list)
+    mappings: Dict[int, str] = field(default_factory=dict)
+    threshold: float = DEFAULT_THRESHOLD
+    mouse_sensitivity: float = DEFAULT_MOUSE_SENSITIVITY
+    stick_deadzone: float = DEFAULT_STICK_DEADZONE
+    scroll_sensitivity: float = DEFAULT_SCROLL_SENSITIVITY
+    universal_mouse: bool = True
+
+
+def effective_mappings(profile: HarnessProfile) -> Dict[int, str]:
+    """合并统一鼠标层与方案专属按键（方案可覆盖鼠标层）"""
+    if not profile.universal_mouse:
+        return dict(profile.mappings)
+    merged = dict(UNIVERSAL_MOUSE_MAPPINGS)
+    merged.update(profile.mappings)
+    return merged
+
+
+def _base_dir() -> str:
+    return os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+
+def _profiles_dir() -> str:
+    return os.path.join(_base_dir(), CONFIG_DIR, PROFILES_DIR)
+
+
+def _app_state_path() -> str:
+    return os.path.join(_base_dir(), CONFIG_DIR, APP_STATE_FILE)
+
+
+def list_profile_ids() -> List[str]:
+    directory = _profiles_dir()
+    if not os.path.isdir(directory):
+        return list(PROFILE_ORDER)
+    on_disk = {
+        name[:-5]
+        for name in os.listdir(directory)
+        if name.endswith(".json")
+    }
+    ordered = [pid for pid in PROFILE_ORDER if pid in on_disk]
+    extra = sorted(on_disk - set(ordered))
+    return ordered + extra or list(PROFILE_ORDER)
+
+
+def load_profile(profile_id: str) -> Optional[HarnessProfile]:
+    path = os.path.join(_profiles_dir(), f"{profile_id}.json")
     if not os.path.isfile(path):
-        return {}, DEFAULT_THRESHOLD
+        return None
 
     try:
         with open(path, "r", encoding="utf-8") as f:
             data = json.load(f)
     except (json.JSONDecodeError, OSError):
-        return {}, DEFAULT_THRESHOLD
+        return None
 
     mappings: Dict[int, str] = {}
     raw = data.get("mappings", {})
@@ -31,18 +92,102 @@ def load_config() -> tuple[Dict[int, str], float]:
         if value and value != "-":
             mappings[int(key)] = str(value)
 
-    threshold = float(data.get("threshold", DEFAULT_THRESHOLD))
-    return mappings, threshold
+    return HarnessProfile(
+        id=data.get("id", profile_id),
+        display_name=data.get("display_name", profile_id),
+        process_names=list(data.get("process_names", [])),
+        mappings=mappings,
+        threshold=float(data.get("threshold", DEFAULT_THRESHOLD)),
+        mouse_sensitivity=float(
+            data.get("mouse_sensitivity", DEFAULT_MOUSE_SENSITIVITY)
+        ),
+        stick_deadzone=float(data.get("stick_deadzone", DEFAULT_STICK_DEADZONE)),
+        scroll_sensitivity=float(
+            data.get("scroll_sensitivity", DEFAULT_SCROLL_SENSITIVITY)
+        ),
+        universal_mouse=bool(data.get("universal_mouse", True)),
+    )
 
 
-def save_config(mappings: Dict[int, str], threshold: float) -> None:
-    """保存映射配置"""
-    path = _config_path()
-    os.makedirs(os.path.dirname(path), exist_ok=True)
+def save_profile(profile: HarnessProfile) -> None:
+    directory = _profiles_dir()
+    os.makedirs(directory, exist_ok=True)
+    path = os.path.join(directory, f"{profile.id}.json")
 
     data = {
-        "mappings": {str(k): v for k, v in sorted(mappings.items())},
-        "threshold": threshold,
+        "id": profile.id,
+        "display_name": profile.display_name,
+        "process_names": profile.process_names,
+        "mappings": {str(k): v for k, v in sorted(profile.mappings.items())},
+        "threshold": profile.threshold,
+        "mouse_sensitivity": profile.mouse_sensitivity,
+        "stick_deadzone": profile.stick_deadzone,
+        "scroll_sensitivity": profile.scroll_sensitivity,
+        "universal_mouse": profile.universal_mouse,
     }
     with open(path, "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False, indent=2)
+
+
+def load_app_state() -> AppState:
+    path = _app_state_path()
+    if not os.path.isfile(path):
+        return AppState()
+
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+    except (json.JSONDecodeError, OSError):
+        return AppState()
+
+    return AppState(
+        active_profile=data.get("active_profile", PROFILE_ORDER[0]),
+        launch_at_startup=bool(data.get("launch_at_startup", False)),
+        auto_start_mapping=bool(data.get("auto_start_mapping", False)),
+    )
+
+
+def save_app_state(state: AppState) -> None:
+    path = _app_state_path()
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    data = {
+        "active_profile": state.active_profile,
+        "launch_at_startup": state.launch_at_startup,
+        "auto_start_mapping": state.auto_start_mapping,
+    }
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False, indent=2)
+
+
+def load_active_profile_id() -> str:
+    return load_app_state().active_profile
+
+
+def save_active_profile_id(profile_id: str) -> None:
+    state = load_app_state()
+    state.active_profile = profile_id
+    save_app_state(state)
+
+
+def load_config() -> tuple[Dict[int, str], float]:
+    """兼容旧接口：加载当前 active profile（含统一鼠标层）"""
+    profile_id = load_active_profile_id()
+    profile = load_profile(profile_id)
+    if profile:
+        return effective_mappings(profile), profile.threshold
+    return {}, DEFAULT_THRESHOLD
+
+
+def save_config(mappings: Dict[int, str], threshold: float) -> None:
+    """兼容旧接口：保存到当前 active profile"""
+    profile_id = load_active_profile_id()
+    profile = load_profile(profile_id)
+    if not profile:
+        profile = HarnessProfile(
+            id=profile_id,
+            display_name=profile_id,
+            process_names=[],
+        )
+    profile.mappings = dict(mappings)
+    profile.threshold = threshold
+    save_profile(profile)

@@ -1,0 +1,41 @@
+# ---- Archives / source drops ----
+*.7z
+*.zip
+*.rar
+
+# ---- Python bytecode / caches ----
+__pycache__/
+*.py[cod]
+*$py.class
+*.pyo
+*.pyd
+.Python
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# ---- Virtualenvs ----
+.venv/
+venv/
+env/
+
+# ---- Packaging / build ----
+build/
+dist/
+*.egg-info/
+*.egg
+*.manifest
+*.spec
+
+# ---- Logs / runtime ----
+*.log
+logs/
+
+# ---- OS / editor ----
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp

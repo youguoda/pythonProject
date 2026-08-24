@@ -1,0 +1,27 @@
+{
+  "id": "claude_code",
+  "display_name": "Claude Code",
+  "process_names": [
+    "WindowsTerminal.exe",
+    "wt.exe",
+    "pwsh.exe",
+    "powershell.exe",
+    "cmd.exe"
+  ],
+  "mappings": {
+    "0": "y",
+    "1": "n",
+    "2": "escape",
+    "3": "ctrl+tab",
+    "4": "ctrl+shift+tab",
+    "5": "ctrl+tab",
+    "8": "ctrl+c",
+    "12": "shift+tab",
+    "13": "enter"
+  },
+  "threshold": 0.5,
+  "mouse_sensitivity": 20.0,
+  "stick_deadzone": 0.15,
+  "scroll_sensitivity": 0.35,
+  "universal_mouse": true
+}

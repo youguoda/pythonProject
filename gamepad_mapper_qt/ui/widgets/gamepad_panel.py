@@ -40,7 +40,7 @@ class GamepadCanvas(QWidget):
         self._right_stick = (0.0, 0.0)
         self._lt = 0.0
         self._rt = 0.0
-        self.setMinimumSize(320, 280)
+        self.setMinimumSize(360, 320)
 
     def update_state(self, result: PollResult):
         self._pressed = list(result.pressed)
@@ -126,7 +126,7 @@ class GamepadCanvas(QWidget):
 
         if label:
             painter.setPen(QPen(QColor(THEME["dark"] if pressed else THEME["subtext"])))
-            font = QFont("Segoe UI", max(7, int(r * 0.7)), QFont.Weight.Bold)
+            font = QFont("Segoe UI", max(9, int(r * 0.85)), QFont.Weight.Bold)
             painter.setFont(font)
             painter.drawText(QRectF(cx - r, cy - r, r * 2, r * 2),
                              Qt.AlignmentFlag.AlignCenter, label)
@@ -143,9 +143,9 @@ class GamepadCanvas(QWidget):
         painter.drawEllipse(QPointF(sx, sy), r * 0.35, r * 0.35)
 
         painter.setPen(QPen(QColor(THEME["subtext"])))
-        font = QFont("Segoe UI", 8)
+        font = QFont("Segoe UI", 11, QFont.Weight.DemiBold)
         painter.setFont(font)
-        painter.drawText(QRectF(cx - r, cy + r + 2, r * 2, 14),
+        painter.drawText(QRectF(cx - r, cy + r + 2, r * 2, 18),
                          Qt.AlignmentFlag.AlignCenter, label)
 
     def _draw_trigger(self, painter, x, y, w, h, value, label):
@@ -161,9 +161,9 @@ class GamepadCanvas(QWidget):
             painter.drawRoundedRect(QRectF(x, y, fill_w, h), 4, 4)
 
         painter.setPen(QPen(QColor(THEME["subtext"])))
-        font = QFont("Segoe UI", 8)
+        font = QFont("Segoe UI", 11, QFont.Weight.DemiBold)
         painter.setFont(font)
-        painter.drawText(QRectF(x, y - 14, w, 12), Qt.AlignmentFlag.AlignCenter, label)
+        painter.drawText(QRectF(x, y - 18, w, 16), Qt.AlignmentFlag.AlignCenter, label)
 
 
 class GamepadPanel(QFrame):
@@ -173,24 +173,27 @@ class GamepadPanel(QFrame):
         super().__init__(parent)
         self.setObjectName("cardFrame")
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(16, 16, 16, 16)
+        layout.setContentsMargins(20, 20, 20, 20)
+        layout.setSpacing(12)
 
         title = QLabel("手柄状态")
-        title.setStyleSheet(f"font-size: 13px; font-weight: 600; color: {THEME['subtext']};")
+        title.setObjectName("sectionLabel")
         layout.addWidget(title)
 
         self._canvas = GamepadCanvas()
         layout.addWidget(self._canvas, stretch=1)
 
         self._info = QLabel("未连接")
+        self._info.setObjectName("infoLabel")
         self._info.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self._info.setStyleSheet(f"color: {THEME['subtext']}; font-size: 11px;")
         layout.addWidget(self._info)
 
     def update_state(self, result: PollResult):
         self._canvas.update_state(result)
 
     def set_info(self, text: str, connected: bool):
-        color = THEME["accent"] if connected else THEME["warn"]
         self._info.setText(text)
-        self._info.setStyleSheet(f"color: {color}; font-size: 11px;")
+        if connected:
+            self._info.setStyleSheet("color: #00d4aa; font-size: 15px; font-weight: 600;")
+        else:
+            self._info.setStyleSheet("color: #ffb84d; font-size: 15px; font-weight: 600;")

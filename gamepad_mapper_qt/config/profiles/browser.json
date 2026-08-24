@@ -1,0 +1,33 @@
+{
+  "id": "browser",
+  "display_name": "浏览器",
+  "process_names": [
+    "chrome.exe",
+    "msedge.exe",
+    "firefox.exe",
+    "brave.exe",
+    "opera.exe",
+    "vivaldi.exe",
+    "Arc.exe",
+    "browser.exe",
+    "zen.exe"
+  ],
+  "mappings": {
+    "0": "enter",
+    "1": "alt+left",
+    "2": "f5",
+    "3": "ctrl+t",
+    "4": "ctrl+shift+tab",
+    "5": "ctrl+tab",
+    "8": "ctrl+w",
+    "12": "pageup",
+    "13": "pagedown",
+    "14": "alt+left",
+    "15": "alt+right"
+  },
+  "threshold": 0.5,
+  "mouse_sensitivity": 20.0,
+  "stick_deadzone": 0.12,
+  "scroll_sensitivity": 0.35,
+  "universal_mouse": true
+}

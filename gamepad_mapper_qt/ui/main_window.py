@@ -2,19 +2,38 @@
 """主窗口"""
 
 import os
+import time
 
 from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtGui import QShortcut, QKeySequence
 from PyQt6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
-    QLabel, QPushButton, QFrame, QMessageBox,
+    QLabel, QPushButton, QFrame, QMessageBox, QComboBox,
 )
 
-from core.constants import APP_NAME, APP_VERSION, THEME, BUTTON_NAMES
-from core.config_store import load_config, save_config
+from core.button_map import IDX_LT, IDX_START
+from core.constants import (
+    APP_NAME, APP_VERSION, THEME, BUTTON_NAMES,
+    LT_LONG_PRESS_SEC, PROFILE_ORDER, UNIVERSAL_MOUSE_MAPPINGS,
+)
+from core.autostart import apply_enabled as apply_autostart, is_supported as autostart_supported
+from core.config_store import (
+    AppState,
+    HarnessProfile,
+    effective_mappings,
+    list_profile_ids,
+    load_app_state,
+    load_active_profile_id,
+    load_profile,
+    save_app_state,
+    save_active_profile_id,
+    save_profile,
+)
 from core.joystick_manager import JoystickManager
 from core.keyboard_output import KeyboardOutput
 from core.mapping_engine import MappingEngine
+from core.mouse_output import MouseOutput
+from core.window_focus import focus_process, is_process_foreground
 from ui.widgets.gamepad_panel import GamepadPanel
 from ui.widgets.mapping_table import MappingTable
 from ui.widgets.status_bar import StatusBar
@@ -25,20 +44,28 @@ class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle(f"{APP_NAME}  v{APP_VERSION}")
-        self.setMinimumSize(960, 640)
-        self.resize(1060, 720)
+        self.setMinimumSize(1100, 780)
+        self.resize(1200, 860)
 
         self._joystick = JoystickManager()
         self._keyboard = KeyboardOutput()
-        self._engine = MappingEngine(self._joystick, self._keyboard)
+        self._mouse = MouseOutput()
+        self._engine = MappingEngine(self._joystick, self._keyboard, self._mouse)
+        self._profile: HarnessProfile | None = None
+        self._profile_ids: list[str] = []
         self._mappings: dict[int, str] = {}
         self._threshold = 0.5
         self._prev_pressed = [False] * len(BUTTON_NAMES)
+        self._lt_press_time: float | None = None
+        self._lt_long_fired = False
+        self._gate_open = False
+        self._app_state = AppState()
 
         self._load_styles()
         self._setup_ui()
         self._connect_signals()
-        self._load_saved_config()
+        self._load_app_settings()
+        self._load_profiles()
         self._refresh_joystick()
 
         self._poll_timer = QTimer(self)
@@ -46,6 +73,7 @@ class MainWindow(QMainWindow):
         self._poll_timer.start(30)
 
         self._engine.start()
+        QTimer.singleShot(800, self._try_auto_start_mapping)
 
     def _load_styles(self):
         style_path = os.path.join(
@@ -63,24 +91,43 @@ class MainWindow(QMainWindow):
         root.setContentsMargins(0, 0, 0, 0)
         root.setSpacing(0)
 
-        # Header
         header = QFrame()
         header.setObjectName("headerFrame")
-        header.setFixedHeight(64)
+        header.setFixedHeight(84)
         header_layout = QHBoxLayout(header)
-        header_layout.setContentsMargins(20, 0, 20, 0)
+        header_layout.setContentsMargins(24, 0, 24, 0)
+        header_layout.setSpacing(16)
 
         title_col = QVBoxLayout()
-        title_col.setSpacing(2)
+        title_col.setSpacing(4)
         title = QLabel(APP_NAME)
         title.setObjectName("titleLabel")
-        subtitle = QLabel("手柄按键 → 键盘映射")
+        subtitle = QLabel("Harness / 浏览器 / 通用 · 统一鼠标层")
         subtitle.setObjectName("subtitleLabel")
         title_col.addWidget(title)
         title_col.addWidget(subtitle)
         header_layout.addLayout(title_col)
 
         header_layout.addStretch()
+
+        harness_label = QLabel("当前方案")
+        harness_label.setObjectName("fieldLabel")
+        header_layout.addWidget(harness_label)
+
+        self._profile_combo = QComboBox()
+        self._profile_combo.setMinimumWidth(200)
+        self._profile_combo.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._profile_combo.currentIndexChanged.connect(self._on_profile_changed)
+        header_layout.addWidget(self._profile_combo)
+
+        self._gate_dot = QLabel("●")
+        self._gate_dot.setObjectName("statusDot")
+        self._gate_dot.setStyleSheet(f"color: {THEME['warn']};")
+        header_layout.addWidget(self._gate_dot)
+
+        self._gate_label = QLabel("未对准")
+        self._gate_label.setObjectName("statusText")
+        header_layout.addWidget(self._gate_label)
 
         self._conn_dot = QLabel("●")
         self._conn_dot.setObjectName("statusDot")
@@ -99,22 +146,28 @@ class MainWindow(QMainWindow):
 
         root.addWidget(header)
 
-        # Body
         body = QHBoxLayout()
-        body.setContentsMargins(16, 16, 16, 8)
-        body.setSpacing(16)
+        body.setContentsMargins(20, 20, 20, 12)
+        body.setSpacing(20)
 
         self._gamepad_panel = GamepadPanel()
         body.addWidget(self._gamepad_panel, stretch=4)
 
         right_col = QVBoxLayout()
-        right_col.setSpacing(8)
+        right_col.setSpacing(12)
 
         table_header = QHBoxLayout()
+        table_header.setSpacing(12)
         table_title = QLabel("按键映射")
-        table_title.setStyleSheet(f"font-size: 13px; font-weight: 600; color: {THEME['subtext']};")
+        table_title.setObjectName("sectionLabel")
         table_header.addWidget(table_title)
         table_header.addStretch()
+
+        focus_btn = QPushButton("聚焦窗口")
+        focus_btn.setObjectName("refreshBtn")
+        focus_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        focus_btn.clicked.connect(self._focus_current_harness)
+        table_header.addWidget(focus_btn)
 
         clear_all_btn = QPushButton("全部清除")
         clear_all_btn.setObjectName("clearBtn")
@@ -126,10 +179,16 @@ class MainWindow(QMainWindow):
         self._mapping_table = MappingTable()
         right_col.addWidget(self._mapping_table, stretch=1)
 
+        hint = QLabel(
+            "LT 短按聚焦 · LT 长按切方案 · RT 按住语音 · Start 启停映射"
+        )
+        hint.setObjectName("hintLabel")
+        hint.setWordWrap(True)
+        right_col.addWidget(hint)
+
         body.addLayout(right_col, stretch=6)
         root.addLayout(body, stretch=1)
 
-        # Footer
         self._status_bar = StatusBar()
         root.addWidget(self._status_bar)
 
@@ -138,24 +197,181 @@ class MainWindow(QMainWindow):
         self._mapping_table.mapping_changed.connect(self._on_mapping_changed)
         self._status_bar.start_stop_clicked.connect(self._toggle_mapping)
         self._status_bar.threshold_changed.connect(self._on_threshold_changed)
+        self._status_bar.mouse_sensitivity_changed.connect(self._on_mouse_sensitivity_changed)
+        self._status_bar.scroll_sensitivity_changed.connect(self._on_scroll_sensitivity_changed)
+        self._status_bar.launch_at_startup_changed.connect(self._on_launch_at_startup_changed)
+        self._status_bar.auto_start_mapping_changed.connect(self._on_auto_start_mapping_changed)
 
         self._engine.state_changed.connect(self._on_engine_state)
         self._engine.error_occurred.connect(self._on_engine_error)
+        self._engine.gate_changed.connect(self._on_gate_changed)
 
         shortcut = QShortcut(QKeySequence("F9"), self)
         shortcut.activated.connect(self._toggle_mapping)
 
-    def _load_saved_config(self):
-        mappings, threshold = load_config()
-        self._mappings = mappings
-        self._threshold = threshold
-        self._joystick.threshold = threshold
-        self._mapping_table.load_mappings(mappings)
-        self._status_bar.set_threshold(threshold)
-        self._engine.set_mappings(mappings)
+    def _load_app_settings(self) -> None:
+        self._app_state = load_app_state()
+        self._status_bar.set_launch_at_startup(self._app_state.launch_at_startup)
+        self._status_bar.set_auto_start_mapping(self._app_state.auto_start_mapping)
+        if autostart_supported() and self._app_state.launch_at_startup:
+            try:
+                apply_autostart(True)
+            except OSError as exc:
+                self._status_bar.set_status(f"自启动注册失败: {exc}")
 
-    def _save_config(self):
-        save_config(self._mapping_table.get_mappings(), self._joystick.threshold)
+    def _save_app_settings(self) -> None:
+        save_app_state(self._app_state)
+
+    def _on_launch_at_startup_changed(self, enabled: bool) -> None:
+        if not autostart_supported():
+            self._status_bar.set_launch_at_startup(False)
+            QMessageBox.warning(self, "提示", "开机自启动目前仅支持 Windows。")
+            return
+        try:
+            apply_autostart(enabled)
+        except OSError as exc:
+            self._status_bar.set_launch_at_startup(not enabled)
+            QMessageBox.warning(self, "自启动失败", str(exc))
+            return
+        self._app_state.launch_at_startup = enabled
+        self._save_app_settings()
+        self._status_bar.set_status("已开启开机自启动" if enabled else "已关闭开机自启动")
+
+    def _on_auto_start_mapping_changed(self, enabled: bool) -> None:
+        self._app_state.auto_start_mapping = enabled
+        self._save_app_settings()
+        self._status_bar.set_status("已开启启动后自动映射" if enabled else "已关闭启动后自动映射")
+
+    def _try_auto_start_mapping(self) -> None:
+        if not self._app_state.auto_start_mapping or self._engine.is_active:
+            return
+        if not self._joystick.connected:
+            self._joystick.refresh()
+        self._start_mapping(silent=True)
+
+    def _load_profiles(self):
+        self._profile_ids = list_profile_ids()
+        active_id = load_active_profile_id()
+        if active_id not in self._profile_ids:
+            self._profile_ids = list(PROFILE_ORDER)
+
+        self._profile_combo.blockSignals(True)
+        self._profile_combo.clear()
+        for pid in self._profile_ids:
+            profile = load_profile(pid)
+            label = profile.display_name if profile else pid
+            self._profile_combo.addItem(label, pid)
+        idx = self._profile_ids.index(active_id) if active_id in self._profile_ids else 0
+        self._profile_combo.setCurrentIndex(idx)
+        self._profile_combo.blockSignals(False)
+
+        self._apply_profile(active_id)
+
+    def _apply_profile(self, profile_id: str) -> None:
+        profile = load_profile(profile_id)
+        if not profile:
+            profile = HarnessProfile(id=profile_id, display_name=profile_id)
+        self._profile = profile
+        save_active_profile_id(profile_id)
+
+        self._mappings = effective_mappings(profile)
+        self._threshold = profile.threshold
+        self._joystick.threshold = profile.threshold
+        self._mapping_table.load_mappings(self._mappings)
+        self._status_bar.set_threshold(profile.threshold)
+        self._status_bar.set_mouse_sensitivity(profile.mouse_sensitivity)
+        self._status_bar.set_scroll_sensitivity(profile.scroll_sensitivity)
+        self._engine.set_mappings(self._mappings)
+        self._engine.set_process_names(profile.process_names)
+        self._apply_stick_settings(profile)
+        self._engine.set_gate_checker(self._check_gate)
+        self._update_gate_display()
+
+    def _apply_stick_settings(self, profile: HarnessProfile) -> None:
+        self._engine.set_mouse_settings(
+            profile.mouse_sensitivity,
+            profile.stick_deadzone,
+            profile.scroll_sensitivity,
+        )
+
+    def _check_gate(self) -> bool:
+        if not self._profile:
+            return True
+        return is_process_foreground(self._profile.process_names)
+
+    def _update_gate_display(self) -> None:
+        open_ = self._check_gate()
+        self._gate_open = open_
+        name = self._profile.display_name if self._profile else ""
+        if self._profile and not self._profile.process_names:
+            self._gate_dot.setStyleSheet(f"color: {THEME['accent']};")
+            self._gate_label.setText(f"{name} · 任意窗口")
+            return
+        if open_:
+            self._gate_dot.setStyleSheet(f"color: {THEME['accent']};")
+            self._gate_label.setText(f"已对准 {name}")
+        else:
+            self._gate_dot.setStyleSheet(f"color: {THEME['warn']};")
+            self._gate_label.setText(f"未对准 {name}")
+
+    def _mappings_for_save(self, table_mappings: dict[int, str]) -> dict[int, str]:
+        """保存时去掉与统一鼠标层相同的项，避免每个方案重复写一遍"""
+        if not self._profile or not self._profile.universal_mouse:
+            return dict(table_mappings)
+        saved: dict[int, str] = {}
+        for key, value in table_mappings.items():
+            if (
+                key in UNIVERSAL_MOUSE_MAPPINGS
+                and value == UNIVERSAL_MOUSE_MAPPINGS[key]
+            ):
+                continue
+            saved[key] = value
+        return saved
+
+    def _on_profile_changed(self, index: int) -> None:
+        if index < 0:
+            return
+        was_running = self._engine.is_active
+        if was_running:
+            self._engine.stop_mapping()
+        self._save_current_profile()
+        profile_id = self._profile_combo.itemData(index)
+        if profile_id:
+            self._apply_profile(profile_id)
+        if was_running:
+            self._engine.start_mapping()
+
+    def _cycle_profile(self) -> None:
+        if not self._profile_ids:
+            return
+        current_id = self._profile_combo.currentData() or self._profile_ids[0]
+        idx = self._profile_ids.index(current_id) if current_id in self._profile_ids else 0
+        next_idx = (idx + 1) % len(self._profile_ids)
+        self._profile_combo.setCurrentIndex(next_idx)
+        self._status_bar.set_status(
+            f"已切换 Harness → {self._profile_combo.currentText()}"
+        )
+
+    def _focus_current_harness(self) -> None:
+        if not self._profile or not self._profile.process_names:
+            self._status_bar.set_status("当前方案未配置 process_names")
+            return
+        if focus_process(self._profile.process_names):
+            self._status_bar.set_status(f"已聚焦 {self._profile.display_name}")
+        else:
+            self._status_bar.set_status(
+                f"未找到 {self._profile.display_name} 窗口，请检查 process_names"
+            )
+        self._update_gate_display()
+
+    def _save_current_profile(self) -> None:
+        if not self._profile:
+            return
+        table_mappings = self._mapping_table.get_mappings()
+        self._profile.mappings = self._mappings_for_save(table_mappings)
+        self._profile.threshold = self._joystick.threshold
+        save_profile(self._profile)
+        self._mappings = effective_mappings(self._profile)
 
     def _refresh_joystick(self):
         if self._engine.is_active:
@@ -174,14 +390,40 @@ class MainWindow(QMainWindow):
             self._gamepad_panel.set_info("未检测到手柄", False)
             self._status_bar.set_status("请连接手柄后点击刷新")
 
+    def _handle_lt(self, pressed: bool) -> None:
+        now = time.monotonic()
+        if pressed and not self._prev_pressed[IDX_LT]:
+            self._lt_press_time = now
+            self._lt_long_fired = False
+        elif pressed and self._lt_press_time and not self._lt_long_fired:
+            if now - self._lt_press_time >= LT_LONG_PRESS_SEC:
+                self._lt_long_fired = True
+                self._cycle_profile()
+        elif not pressed and self._prev_pressed[IDX_LT]:
+            if (
+                self._lt_press_time
+                and not self._lt_long_fired
+                and now - self._lt_press_time < LT_LONG_PRESS_SEC
+            ):
+                self._focus_current_harness()
+            self._lt_press_time = None
+
     def _poll_visual(self):
         if not self._joystick.connected:
             return
 
         result = self._joystick.poll()
         self._gamepad_panel.update_state(result)
+        self._update_gate_display()
+
+        if result.pressed[IDX_START] and not self._prev_pressed[IDX_START]:
+            self._toggle_mapping()
+
+        self._handle_lt(result.pressed[IDX_LT])
 
         for bi, pressed in enumerate(result.pressed):
+            if bi in (IDX_LT, IDX_START):
+                continue
             if pressed and not self._prev_pressed[bi]:
                 self._mapping_table.highlight_button(bi)
             elif not pressed and self._prev_pressed[bi]:
@@ -203,12 +445,27 @@ class MainWindow(QMainWindow):
         mappings = self._mapping_table.get_mappings()
         self._mappings = mappings
         self._engine.set_mappings(mappings)
-        self._save_config()
+        self._save_current_profile()
+        self._mapping_table.load_mappings(self._mappings)
 
     def _on_threshold_changed(self, value: float):
         self._threshold = value
         self._joystick.threshold = value
-        self._save_config()
+        if self._profile:
+            self._profile.threshold = value
+        self._save_current_profile()
+
+    def _on_mouse_sensitivity_changed(self, value: float):
+        if self._profile:
+            self._profile.mouse_sensitivity = value
+            self._apply_stick_settings(self._profile)
+        self._save_current_profile()
+
+    def _on_scroll_sensitivity_changed(self, value: float):
+        if self._profile:
+            self._profile.scroll_sensitivity = value
+            self._apply_stick_settings(self._profile)
+        self._save_current_profile()
 
     def _clear_all_mappings(self):
         if self._engine.is_active:
@@ -227,18 +484,28 @@ class MainWindow(QMainWindow):
         else:
             self._start_mapping()
 
-    def _start_mapping(self):
+    def _start_mapping(self, silent: bool = False):
         mappings = self._mapping_table.get_mappings()
         if not self._joystick.connected:
-            QMessageBox.warning(self, "警告", "没有检测到手柄，请先连接并刷新！")
+            if silent:
+                self._status_bar.set_status("自动映射：未检测到手柄")
+            else:
+                QMessageBox.warning(self, "警告", "没有检测到手柄，请先连接并刷新！")
             return
         if not mappings:
-            QMessageBox.warning(self, "警告", "请先绑定至少一个按键映射！")
+            if silent:
+                self._status_bar.set_status("自动映射：当前方案无按键映射")
+            else:
+                QMessageBox.warning(self, "警告", "请先绑定至少一个按键映射！")
             return
 
         self._engine.set_mappings(mappings)
+        self._engine.set_gate_checker(self._check_gate)
         self._engine.start_mapping()
-        self._status_bar.set_status("映射运行中… (F9 停止)")
+        if silent:
+            self._status_bar.set_status("已自动开始映射")
+        else:
+            self._status_bar.set_status("映射运行中… (F9 / Start 停止)")
 
     def _on_engine_state(self, running: bool):
         self._status_bar.set_running(running)
@@ -248,10 +515,15 @@ class MainWindow(QMainWindow):
     def _on_engine_error(self, msg: str):
         self._status_bar.set_status(f"错误: {msg}")
 
+    def _on_gate_changed(self, open_: bool, _label: str):
+        self._gate_open = open_
+        self._update_gate_display()
+
     def closeEvent(self, event):
         self._poll_timer.stop()
         self._engine.stop_mapping()
         self._engine.terminate_engine()
-        self._save_config()
+        self._save_current_profile()
+        self._save_app_settings()
         self._joystick.shutdown()
         event.accept()

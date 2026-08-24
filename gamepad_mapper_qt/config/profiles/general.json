@@ -1,0 +1,23 @@
+{
+  "id": "general",
+  "display_name": "通用",
+  "process_names": [],
+  "mappings": {
+    "0": "enter",
+    "1": "escape",
+    "2": "backspace",
+    "3": "tab",
+    "4": "shift+tab",
+    "5": "tab",
+    "8": "cmd+tab",
+    "12": "up",
+    "13": "down",
+    "14": "left",
+    "15": "right"
+  },
+  "threshold": 0.5,
+  "mouse_sensitivity": 29.0,
+  "stick_deadzone": 0.12,
+  "scroll_sensitivity": 0.3,
+  "universal_mouse": true
+}

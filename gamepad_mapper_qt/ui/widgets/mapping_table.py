@@ -4,13 +4,16 @@
 from typing import Dict
 
 from PyQt6.QtCore import Qt, pyqtSignal
-from PyQt6.QtGui import QColor
+from PyQt6.QtGui import QColor, QFont
 from PyQt6.QtWidgets import (
     QTableWidget, QTableWidgetItem, QPushButton, QWidget,
     QHBoxLayout, QHeaderView, QAbstractItemView,
 )
 
 from core.constants import BUTTON_NAMES, BTN_COLOR, DEFAULT_BTN_COLOR, THEME
+
+_ROW_HEIGHT = 40
+_BTN_HEIGHT = 28
 
 
 class MappingTable(QTableWidget):
@@ -39,8 +42,11 @@ class MappingTable(QTableWidget):
         header.setSectionResizeMode(0, QHeaderView.ResizeMode.Fixed)
         header.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
         header.setSectionResizeMode(2, QHeaderView.ResizeMode.Fixed)
-        self.setColumnWidth(0, 160)
-        self.setColumnWidth(2, 130)
+        self.setColumnWidth(0, 200)
+        self.setColumnWidth(2, 176)
+
+        row_font = QFont("Segoe UI", 14)
+        row_font.setWeight(QFont.Weight.DemiBold)
 
         for row, name in enumerate(BUTTON_NAMES):
             color = BTN_COLOR.get(name, DEFAULT_BTN_COLOR)
@@ -48,33 +54,37 @@ class MappingTable(QTableWidget):
             name_item = QTableWidgetItem(dot_name)
             name_item.setFlags(Qt.ItemFlag.ItemIsEnabled)
             name_item.setForeground(QColor(color))
+            name_item.setFont(row_font)
             self.setItem(row, 0, name_item)
 
             key_item = QTableWidgetItem("-")
             key_item.setFlags(Qt.ItemFlag.ItemIsEnabled)
             key_item.setForeground(QColor(THEME["subtext"]))
             key_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+            key_item.setFont(row_font)
             self.setItem(row, 1, key_item)
 
             btn_widget = QWidget()
             btn_layout = QHBoxLayout(btn_widget)
-            btn_layout.setContentsMargins(4, 2, 4, 2)
-            btn_layout.setSpacing(4)
+            btn_layout.setContentsMargins(6, 2, 6, 2)
+            btn_layout.setSpacing(6)
 
             bind_btn = QPushButton("绑定")
             bind_btn.setObjectName("bindBtn")
+            bind_btn.setFixedHeight(_BTN_HEIGHT)
             bind_btn.setCursor(Qt.CursorShape.PointingHandCursor)
             bind_btn.clicked.connect(lambda _, r=row: self.bind_requested.emit(r))
             btn_layout.addWidget(bind_btn)
 
             clear_btn = QPushButton("清除")
             clear_btn.setObjectName("clearBtn")
+            clear_btn.setFixedHeight(_BTN_HEIGHT)
             clear_btn.setCursor(Qt.CursorShape.PointingHandCursor)
             clear_btn.clicked.connect(lambda _, r=row: self._clear_row(r))
             btn_layout.addWidget(clear_btn)
 
             self.setCellWidget(row, 2, btn_widget)
-            self.setRowHeight(row, 36)
+            self.setRowHeight(row, _ROW_HEIGHT)
 
         self.cellDoubleClicked.connect(self._on_double_click)
 

@@ -23,13 +23,15 @@ class KeyboardOutput:
 
     @staticmethod
     def _parse_combo(key_name: str) -> list[str]:
+        if key_name in ("+", "[", "]", "(", ")"):
+            return [key_name]
         return [k.strip() for k in key_name.split("+") if k.strip()]
 
     def press(self, key_name: str) -> None:
         if key_name in self._pressed:
             return
         try:
-            if "+" in key_name:
+            if "+" in key_name and key_name not in ("+",):
                 for part in self._parse_combo(key_name):
                     self._controller.press(self._resolve_key(part))
             else:
@@ -42,7 +44,7 @@ class KeyboardOutput:
         if key_name not in self._pressed:
             return
         try:
-            if "+" in key_name:
+            if "+" in key_name and key_name not in ("+",):
                 for part in reversed(self._parse_combo(key_name)):
                     self._controller.release(self._resolve_key(part))
             else:

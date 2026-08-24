@@ -74,8 +74,23 @@ _DISPLAY_NAMES = {
 }
 
 
+# Windows scan codes (extended keys) — fallback when VK is generic
+_WIN_SCAN_TO_MOD = {
+    29: "ctrl_l",
+    285: "ctrl_r",
+    42: "shift_l",
+    54: "shift_r",
+    56: "alt_l",
+    312: "alt_r",
+}
+
+
 def _mod_from_native_vk(vk: int) -> str | None:
     return _WIN_VK_TO_MOD.get(vk)
+
+
+def _mod_from_native_scan(scan: int) -> str | None:
+    return _WIN_SCAN_TO_MOD.get(scan)
 
 
 def _query_held_modifiers_win32() -> list[str]:
@@ -98,6 +113,7 @@ class KeyBindDialog(QDialog):
         super().__init__(parent)
         self._button_index = button_index
         self._captured_key: str | None = None
+        self._pending_modifier: str | None = None
         self._setup_ui()
 
     def _setup_ui(self):
@@ -148,10 +164,13 @@ class KeyBindDialog(QDialog):
             return
 
         if event.key() in _MODIFIER_KEYS:
+            self._pending_modifier = self._modifier_from_event(event)
             mods = self._active_modifiers(event)
             if mods:
                 preview = " + ".join(self._format_display(m) for m in mods) + " + …"
                 self._key_label.setText(preview)
+            elif self._pending_modifier:
+                self._key_label.setText(self._format_display(self._pending_modifier) + " + …")
             self._confirm_btn.setEnabled(False)
             return
 
@@ -168,17 +187,36 @@ class KeyBindDialog(QDialog):
         if event.key() not in _MODIFIER_KEYS:
             return
 
-        mod = self._modifier_from_event(event)
+        mod = self._pending_modifier or self._modifier_from_event(event)
         if not mod:
             return
 
-        held = self._active_modifiers(event)
-        if len(held) == 1 and held[0] == mod:
-            self._captured_key = mod
-            self._key_label.setText(self._format_display(mod))
-            self._confirm_btn.setEnabled(True)
+        self._captured_key = mod
+        self._key_label.setText(self._format_display(mod))
+        self._confirm_btn.setEnabled(True)
+        self._pending_modifier = None
 
     def _modifier_from_event(self, event: QKeyEvent) -> str | None:
+        if event.key() not in _MODIFIER_KEYS:
+            return None
+
+        if sys.platform == "win32":
+            # 与组合键相同：按键按下时用 GetAsyncKeyState 区分左右
+            held = _query_held_modifiers_win32()
+            if len(held) == 1:
+                return held[0]
+            if len(held) > 1:
+                for probe in (
+                    _mod_from_native_vk(event.nativeVirtualKey()),
+                    _mod_from_native_scan(event.nativeScanCode()),
+                ):
+                    if probe and probe in held:
+                        return probe
+
+            scan_mod = _mod_from_native_scan(event.nativeScanCode())
+            if scan_mod:
+                return scan_mod
+
         vk = event.nativeVirtualKey()
         specific = _mod_from_native_vk(vk)
         if specific:
@@ -214,10 +252,26 @@ class KeyBindDialog(QDialog):
             return chr(key)
         text = event.text()
         if text and text.isprintable() and len(text) == 1:
-            return text.lower()
+            return text
         return None
 
+    def _symbol_from_event(self, event: QKeyEvent) -> str | None:
+        """Shift+9 等得到 ( ) [ ] { } 时，绑定该符号本身，而不是 shift+数字。"""
+        text = event.text()
+        if not text or len(text) != 1 or not text.isprintable():
+            return None
+        if text.isalnum() or text.isspace():
+            return None
+        mods = self._active_modifiers(event)
+        if any(m.startswith("ctrl") or m.startswith("alt") for m in mods):
+            return None
+        return text
+
     def _event_to_combo(self, event: QKeyEvent) -> str | None:
+        symbol = self._symbol_from_event(event)
+        if symbol:
+            return symbol
+
         main = self._resolve_main_key(event)
         if not main:
             return None

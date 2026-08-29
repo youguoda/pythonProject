@@ -101,14 +101,27 @@ _更新表格高亮(frame)
 
 **`process_names` 为空列表时闸门恒开**（`general` / 通用方案就靠这个对任意窗口生效）。闸门关闭时引擎会 `release_all()` 并抬起鼠标键，防止切窗时按键卡住。
 
-### 统一鼠标层的合并/剥离往返
+### ActiveProfile 拥有当前方案
 
-这是 profile 读写中最容易被破坏的一环，两个方向必须成对理解：
+`core/active_profile.py` 是**唯一持有「当前生效方案」的地方**。对外接口很窄：
 
-- 读：`config_store.effective_mappings()` 把 `UNIVERSAL_MOUSE_MAPPINGS` 合并进 profile（profile 自己的同槽位配置优先覆盖）
-- 写：`MainWindow._mappings_for_save()` 把与统一层**完全相同**的条目剔除再落盘
+```python
+ActiveProfile(profile_id, on_save_failed=回调)
+  .mappings / .profile / .savable          # 只读
+  .switch_to(id)
+  .set_mappings(dict)
+  .set_threshold / set_mouse_sensitivity / set_scroll_sensitivity
+```
 
-所以磁盘上的 profile JSON 里正常看不到 `"10"` / `"11"`，只有用户主动改成别的值才会出现。往 `UNIVERSAL_MOUSE_MAPPINGS` 加东西时，靠的就是这个往返保证老 profile 不被写脏。profile 设 `"universal_mouse": false` 可整体关掉这一层。
+它藏起来三件事：
+
+**统一鼠标层的合并/剥离往返** —— 读时 `effective_mappings()` 合并 `UNIVERSAL_MOUSE_MAPPINGS`，写时 `_剥离统一鼠标层()` 把取值相同的条目剔除。**这一对互逆操作必须待在同一个 module 里**，分开放会让「合并再剥离等于原样」这个不变式无人负责（历史上剥离曾在 `MainWindow`）。所以磁盘 JSON 里正常看不到 `"10"` / `"11"`，只有改绑成别的值才出现。profile 设 `"universal_mouse": false` 可整体关掉。
+
+**落盘时机** —— 任何 setter 立即写盘，调用方不需要知道 `save()` 存在。代价是拖一次滑块会写几十次文件；这是有意接受的，换取「没有未保存状态」这个简化。
+
+**落盘失败** —— 文件损坏时 `save_profile` 抛 `ConfigNotSavable`，`ActiveProfile` 内部捕获去重后走 `on_save_failed` 回调，**对调用方永不抛**。否则每个 setter 的调用点都得处理一个它没请求的操作的失败模式。
+
+`MainWindow` 因此不再持有 `_mappings`（那曾是个纯中间变量，三次读取全是转手推给别人），`_apply_profile` 收敛成 `switch_to` + `_把方案推给各消费者()`。`MappingTable` 和 `MappingEngine` 仍各持一份工作副本 —— widget 需要自己的显示模型，引擎在 60Hz 热路径上不能每帧跨对象查询 —— 但**只从 ActiveProfile 这一个源头拿**。
 
 ### 持久化
 

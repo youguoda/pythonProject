@@ -14,21 +14,20 @@ from PyQt6.QtWidgets import (
 from core.button_map import IDX_LT, IDX_START
 from core.constants import (
     APP_NAME, APP_VERSION, THEME,
-    LT_LONG_PRESS_SEC, PROFILE_ORDER, UNIVERSAL_MOUSE_MAPPINGS,
+    LT_LONG_PRESS_SEC, PROFILE_ORDER,
 )
+from core.active_profile import ActiveProfile
 from core.autostart import apply_enabled as apply_autostart, is_supported as autostart_supported
 from core.config_store import (
     AppState,
     ConfigNotSavable,
     HarnessProfile,
-    effective_mappings,
     list_profile_ids,
     load_app_state,
     load_active_profile_id,
     load_profile,
     save_app_state,
     save_active_profile_id,
-    save_profile,
 )
 from core.gamepad_input import GamepadInput
 from core.joystick_manager import JoystickManager
@@ -57,10 +56,8 @@ class MainWindow(QMainWindow):
         self._keyboard = KeyboardOutput()
         self._mouse = MouseOutput()
         self._engine = MappingEngine(self._keyboard, self._mouse)
-        self._profile: HarnessProfile | None = None
+        self._active: ActiveProfile | None = None
         self._profile_ids: list[str] = []
-        self._mappings: dict[int, str] = {}
-        self._threshold = 0.5
         self._gate_open = False
         self._app_state = AppState()
         self._帧计数 = 0
@@ -279,25 +276,14 @@ class MainWindow(QMainWindow):
         self._apply_profile(active_id)
 
     def _apply_profile(self, profile_id: str) -> None:
-        profile = load_profile(profile_id)
-        if not profile:
-            profile = HarnessProfile(id=profile_id, display_name=profile_id)
-        self._profile = profile
+        if self._active is None:
+            self._active = ActiveProfile(profile_id, on_save_failed=self._报告拒写)
+        else:
+            self._active.switch_to(profile_id)
+
         # app_state.json 损坏时这里会拒写；不能让它把切方案和启动一起搞挂
         self._安全保存(lambda: save_active_profile_id(profile_id))
-
-        self._mappings = effective_mappings(profile)
-        self._threshold = profile.threshold
-        self._joystick.threshold = profile.threshold
-        self._mapping_table.load_mappings(self._mappings)
-        self._status_bar.set_threshold(profile.threshold)
-        self._status_bar.set_mouse_sensitivity(profile.mouse_sensitivity)
-        self._status_bar.set_scroll_sensitivity(profile.scroll_sensitivity)
-        self._engine.set_mappings(self._mappings)
-        self._engine.set_process_names(profile.process_names)
-        self._apply_stick_settings(profile)
-        self._engine.set_gate_checker(self._check_gate)
-        self._update_gate_display()
+        self._把方案推给各消费者()
 
         self._提示损坏方案()
 
@@ -307,9 +293,9 @@ class MainWindow(QMainWindow):
         在 __init__ 末尾要再调一次：_refresh_joystick 会写状态栏，
         否则启动时这条解释会被「手柄已连接」冲掉。
         """
-        if self._profile and not self._profile.savable:
+        if self._active and not self._active.savable:
             self._status_bar.set_status(
-                f"⚠ config/profiles/{self._profile.id}.json 读取失败（JSON 格式有误）。"
+                f"⚠ config/profiles/{self._active.profile.id}.json 读取失败（JSON 格式有误）。"
                 "映射显示为空，已停止写入以免覆盖你原有的配置。修复文件后重启生效。"
             )
 
@@ -321,15 +307,15 @@ class MainWindow(QMainWindow):
         )
 
     def _check_gate(self) -> bool:
-        if not self._profile:
+        if not self._active:
             return True
-        return is_process_foreground(self._profile.process_names)
+        return is_process_foreground(self._active.profile.process_names)
 
     def _update_gate_display(self) -> None:
         open_ = self._check_gate()
         self._gate_open = open_
-        name = self._profile.display_name if self._profile else ""
-        if self._profile and not self._profile.process_names:
+        name = self._active.profile.display_name if self._active else ""
+        if self._active and not self._active.profile.process_names:
             self._gate_dot.setStyleSheet(f"color: {THEME['accent']};")
             self._gate_label.setText(f"{name} · 任意窗口")
             return
@@ -340,19 +326,25 @@ class MainWindow(QMainWindow):
             self._gate_dot.setStyleSheet(f"color: {THEME['warn']};")
             self._gate_label.setText(f"未对准 {name}")
 
-    def _mappings_for_save(self, table_mappings: dict[int, str]) -> dict[int, str]:
-        """保存时去掉与统一鼠标层相同的项，避免每个方案重复写一遍"""
-        if not self._profile or not self._profile.universal_mouse:
-            return dict(table_mappings)
-        saved: dict[int, str] = {}
-        for key, value in table_mappings.items():
-            if (
-                key in UNIVERSAL_MOUSE_MAPPINGS
-                and value == UNIVERSAL_MOUSE_MAPPINGS[key]
-            ):
-                continue
-            saved[key] = value
-        return saved
+    def _把方案推给各消费者(self) -> None:
+        """ActiveProfile 是唯一源头；table 和 engine 各持一份工作副本"""
+        profile = self._active.profile
+        mappings = self._active.mappings
+
+        self._joystick.threshold = profile.threshold
+        self._mapping_table.load_mappings(mappings)
+        self._status_bar.set_threshold(profile.threshold)
+        self._status_bar.set_mouse_sensitivity(profile.mouse_sensitivity)
+        self._status_bar.set_scroll_sensitivity(profile.scroll_sensitivity)
+        self._engine.set_mappings(mappings)
+        self._engine.set_process_names(profile.process_names)
+        self._apply_stick_settings(profile)
+        self._engine.set_gate_checker(self._check_gate)
+        self._update_gate_display()
+        self._提示损坏方案()
+
+    def _报告拒写(self, 消息: str) -> None:
+        self._status_bar.set_status(消息)
 
     def _on_profile_changed(self, index: int) -> None:
         if index < 0:
@@ -360,7 +352,6 @@ class MainWindow(QMainWindow):
         was_running = self._engine.is_active
         if was_running:
             self._engine.stop_mapping()
-        self._save_current_profile()
         profile_id = self._profile_combo.itemData(index)
         if profile_id:
             self._apply_profile(profile_id)
@@ -379,14 +370,14 @@ class MainWindow(QMainWindow):
         )
 
     def _focus_current_harness(self) -> None:
-        if not self._profile or not self._profile.process_names:
+        if not self._active or not self._active.profile.process_names:
             self._status_bar.set_status("当前方案未配置 process_names")
             return
-        if focus_process(self._profile.process_names):
-            self._status_bar.set_status(f"已聚焦 {self._profile.display_name}")
+        if focus_process(self._active.profile.process_names):
+            self._status_bar.set_status(f"已聚焦 {self._active.profile.display_name}")
         else:
             self._status_bar.set_status(
-                f"未找到 {self._profile.display_name} 窗口，请检查 process_names"
+                f"未找到 {self._active.profile.display_name} 窗口，请检查 process_names"
             )
         self._update_gate_display()
 
@@ -405,15 +396,6 @@ class MainWindow(QMainWindow):
                 self._已提示的拒写.add(消息)
                 self._status_bar.set_status(消息)
             return False
-
-    def _save_current_profile(self) -> None:
-        if not self._profile:
-            return
-        table_mappings = self._mapping_table.get_mappings()
-        self._profile.mappings = self._mappings_for_save(table_mappings)
-        self._profile.threshold = self._joystick.threshold
-        if self._安全保存(lambda: save_profile(self._profile)):
-            self._mappings = effective_mappings(self._profile)
 
     def _refresh_joystick(self):
         if self._engine.is_active:
@@ -476,30 +458,22 @@ class MainWindow(QMainWindow):
         self._mapping_table.set_mapping(button_index, key_name)
 
     def _on_mapping_changed(self):
-        mappings = self._mapping_table.get_mappings()
-        self._mappings = mappings
-        self._engine.set_mappings(mappings)
-        self._save_current_profile()
-        self._mapping_table.load_mappings(self._mappings)
+        self._active.set_mappings(self._mapping_table.get_mappings())
+        合并后 = self._active.mappings
+        self._engine.set_mappings(合并后)
+        self._mapping_table.load_mappings(合并后)
 
     def _on_threshold_changed(self, value: float):
-        self._threshold = value
         self._joystick.threshold = value
-        if self._profile:
-            self._profile.threshold = value
-        self._save_current_profile()
+        self._active.set_threshold(self._joystick.threshold)
 
     def _on_mouse_sensitivity_changed(self, value: float):
-        if self._profile:
-            self._profile.mouse_sensitivity = value
-            self._apply_stick_settings(self._profile)
-        self._save_current_profile()
+        self._active.set_mouse_sensitivity(value)
+        self._apply_stick_settings(self._active.profile)
 
     def _on_scroll_sensitivity_changed(self, value: float):
-        if self._profile:
-            self._profile.scroll_sensitivity = value
-            self._apply_stick_settings(self._profile)
-        self._save_current_profile()
+        self._active.set_scroll_sensitivity(value)
+        self._apply_stick_settings(self._active.profile)
 
     def _clear_all_mappings(self):
         if self._engine.is_active:
@@ -519,7 +493,9 @@ class MainWindow(QMainWindow):
             self._start_mapping()
 
     def _start_mapping(self, silent: bool = False):
-        mappings = self._mapping_table.get_mappings()
+        # 源头是 ActiveProfile，不是表格 —— 从前这两处各取各的，
+        # 只靠 _on_mapping_changed 每次同步才没出事
+        mappings = self._active.mappings
         if not self._joystick.connected:
             if silent:
                 self._status_bar.set_status("自动映射：未检测到手柄")
@@ -557,7 +533,6 @@ class MainWindow(QMainWindow):
         self._poll_timer.stop()
         self._engine.stop_mapping()
         self._engine.terminate_engine()
-        self._save_current_profile()
         self._save_app_settings()
         self._joystick.shutdown()
         event.accept()

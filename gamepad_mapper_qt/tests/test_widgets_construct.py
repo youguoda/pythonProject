@@ -63,3 +63,45 @@ def test_状态栏能构造(qt_app):
     from ui.widgets.status_bar import StatusBar
 
     StatusBar()
+
+
+# ---------- 信号接线 ----------
+# 构造测试只回答「造得出来吗」，拦不住「一个信号接了两处」。
+# 那个 bug 的表现是点一次弹两个对话框、要取消两次。
+
+@pytest.fixture
+def 主窗口(qt_app, tmp_path, monkeypatch):
+    """配置目录隔离到临时目录 —— ActiveProfile 任何变更立即落盘，
+    直接跑在真实 config/ 上会改写用户的方案（已经因此丢过一次数据）。"""
+    import shutil
+    from core import config_store as cs
+
+    shutil.copytree("config/profiles", tmp_path / "profiles")
+    monkeypatch.setattr(cs, "_profiles_dir", lambda: str(tmp_path / "profiles"))
+    monkeypatch.setattr(cs, "_app_state_path", lambda: str(tmp_path / "app_state.json"))
+
+    from ui.main_window import MainWindow
+    w = MainWindow()
+    yield w
+    w.close()
+
+
+def test_点击信号各自只接一处(主窗口):
+    """接两处就会弹两个对话框、要取消两次
+
+    直接数接收者，而不是发信号看副作用：直连的 _open_bind_dialog 是在
+    connect 时绑定的，事后替换属性拦不住它，测试会真的弹出模态框卡死。
+    """
+    panel = 主窗口._gamepad_panel
+    assert panel.receivers(panel.slot_clicked) == 1
+    assert panel.receivers(panel.slot_refused) == 1
+
+
+def test_保留槽位点击后状态栏说明原因(主窗口):
+    上报 = []
+    主窗口._status_bar.set_status = lambda text: 上报.append(text)
+
+    主窗口._on_slot_refused(6)      # LT
+
+    assert len(上报) == 1
+    assert "LT" in 上报[0]

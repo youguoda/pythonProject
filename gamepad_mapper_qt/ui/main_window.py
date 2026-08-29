@@ -213,10 +213,10 @@ class MainWindow(QMainWindow):
 
     def _connect_signals(self):
         self._mapping_table.bind_requested.connect(self._open_bind_dialog)
+        # 每个信号只接一处：_on_slot_clicked 内部会调 _open_bind_dialog，
+        # 再直连一次就会弹两个对话框（表现为要取消两次）。
         self._gamepad_panel.slot_clicked.connect(self._on_slot_clicked)
         self._gamepad_panel.slot_refused.connect(self._on_slot_refused)
-        self._gamepad_panel.slot_clicked.connect(self._open_bind_dialog)
-        self._gamepad_panel.slot_refused.connect(self._explain_reserved_slot)
         self._mapping_table.mapping_changed.connect(self._on_mapping_changed)
         self._status_bar.start_stop_clicked.connect(self._toggle_mapping)
         self._status_bar.threshold_changed.connect(self._on_threshold_changed)
@@ -476,10 +476,6 @@ class MainWindow(QMainWindow):
         for slot in frame.just_released:
             if slot not in (IDX_LT, IDX_START):
                 self._mapping_table.clear_highlight_if(slot)
-
-    def _explain_reserved_slot(self, slot: int):
-        """保留槽位点了不弹绑定框，而是说明它已被什么占用"""
-        self._status_bar.set_status(conflict_reason(slot))
 
     def _on_slot_clicked(self, slot: int) -> None:
         """点手柄图上的键 —— 这是绑定的主入口"""

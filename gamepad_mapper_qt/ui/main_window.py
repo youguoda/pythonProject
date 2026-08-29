@@ -13,7 +13,7 @@ from PyQt6.QtWidgets import (
 
 from core.button_map import IDX_LT, IDX_START
 from core.constants import (
-    APP_NAME, APP_VERSION, THEME, BUTTON_NAMES,
+    APP_NAME, APP_VERSION, THEME,
     LT_LONG_PRESS_SEC, PROFILE_ORDER, UNIVERSAL_MOUSE_MAPPINGS,
 )
 from core.autostart import apply_enabled as apply_autostart, is_supported as autostart_supported
@@ -29,6 +29,7 @@ from core.config_store import (
     save_active_profile_id,
     save_profile,
 )
+from core.gamepad_input import GamepadInput
 from core.joystick_manager import JoystickManager
 from core.keyboard_output import KeyboardOutput
 from core.mapping_engine import MappingEngine
@@ -48,18 +49,20 @@ class MainWindow(QMainWindow):
         self.resize(1200, 860)
 
         self._joystick = JoystickManager()
+        self._input = GamepadInput(
+            self._joystick,
+            long_press_after={IDX_LT: LT_LONG_PRESS_SEC},
+        )
         self._keyboard = KeyboardOutput()
         self._mouse = MouseOutput()
-        self._engine = MappingEngine(self._joystick, self._keyboard, self._mouse)
+        self._engine = MappingEngine(self._keyboard, self._mouse)
         self._profile: HarnessProfile | None = None
         self._profile_ids: list[str] = []
         self._mappings: dict[int, str] = {}
         self._threshold = 0.5
-        self._prev_pressed = [False] * len(BUTTON_NAMES)
-        self._lt_press_time: float | None = None
-        self._lt_long_fired = False
         self._gate_open = False
         self._app_state = AppState()
+        self._帧计数 = 0
 
         self._load_styles()
         self._setup_ui()
@@ -68,11 +71,11 @@ class MainWindow(QMainWindow):
         self._load_profiles()
         self._refresh_joystick()
 
+        # 全应用唯一的 tick：60Hz 采样，面板每两帧重绘一次
         self._poll_timer = QTimer(self)
-        self._poll_timer.timeout.connect(self._poll_visual)
-        self._poll_timer.start(30)
+        self._poll_timer.timeout.connect(self._tick)
+        self._poll_timer.start(16)
 
-        self._engine.start()
         QTimer.singleShot(800, self._try_auto_start_mapping)
 
     def _load_styles(self):
@@ -390,45 +393,37 @@ class MainWindow(QMainWindow):
             self._gamepad_panel.set_info("未检测到手柄", False)
             self._status_bar.set_status("请连接手柄后点击刷新")
 
-    def _handle_lt(self, pressed: bool) -> None:
-        now = time.monotonic()
-        if pressed and not self._prev_pressed[IDX_LT]:
-            self._lt_press_time = now
-            self._lt_long_fired = False
-        elif pressed and self._lt_press_time and not self._lt_long_fired:
-            if now - self._lt_press_time >= LT_LONG_PRESS_SEC:
-                self._lt_long_fired = True
-                self._cycle_profile()
-        elif not pressed and self._prev_pressed[IDX_LT]:
-            if (
-                self._lt_press_time
-                and not self._lt_long_fired
-                and now - self._lt_press_time < LT_LONG_PRESS_SEC
-            ):
-                self._focus_current_harness()
-            self._lt_press_time = None
-
-    def _poll_visual(self):
-        if not self._joystick.connected:
+    def _tick(self):
+        """全应用唯一的 tick：一次采样，所有消费者读同一帧"""
+        frame = self._input.tick(time.monotonic())
+        if not frame.connected:
             return
 
-        result = self._joystick.poll()
-        self._gamepad_panel.update_state(result)
+        self._engine.consume(frame)
+        self._分派保留槽位(frame)
+        self._更新表格高亮(frame)
         self._update_gate_display()
 
-        if result.pressed[IDX_START] and not self._prev_pressed[IDX_START]:
+        self._帧计数 += 1
+        if self._帧计数 % 2 == 0:
+            self._gamepad_panel.update_state(frame)
+
+    def _分派保留槽位(self, frame) -> None:
+        """保留槽位的语义留在这里；边沿判定由 GamepadInput 负责"""
+        if IDX_START in frame.just_pressed:
             self._toggle_mapping()
+        if IDX_LT in frame.just_long_pressed:
+            self._cycle_profile()
+        if IDX_LT in frame.just_short_released:
+            self._focus_current_harness()
 
-        self._handle_lt(result.pressed[IDX_LT])
-
-        for bi, pressed in enumerate(result.pressed):
-            if bi in (IDX_LT, IDX_START):
-                continue
-            if pressed and not self._prev_pressed[bi]:
-                self._mapping_table.highlight_button(bi)
-            elif not pressed and self._prev_pressed[bi]:
-                self._mapping_table.clear_highlight_if(bi)
-            self._prev_pressed[bi] = pressed
+    def _更新表格高亮(self, frame) -> None:
+        for slot in frame.just_pressed:
+            if slot not in (IDX_LT, IDX_START):
+                self._mapping_table.highlight_button(slot)
+        for slot in frame.just_released:
+            if slot not in (IDX_LT, IDX_START):
+                self._mapping_table.clear_highlight_if(slot)
 
     def _open_bind_dialog(self, button_index: int):
         if self._engine.is_active:

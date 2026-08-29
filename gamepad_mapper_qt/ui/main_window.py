@@ -17,7 +17,11 @@ from core.constants import (
     LT_LONG_PRESS_SEC, PROFILE_ORDER,
 )
 from core.active_profile import ActiveProfile
-from core.autostart import apply_enabled as apply_autostart, is_supported as autostart_supported
+from core.autostart import (
+    apply_enabled as apply_autostart,
+    is_enabled as autostart_enabled,
+    is_supported as autostart_supported,
+)
 from core.config_store import (
     AppState,
     ConfigNotSavable,
@@ -60,8 +64,8 @@ class MainWindow(QMainWindow):
         self._profile_ids: list[str] = []
         self._gate_open = False
         self._app_state = AppState()
-        self._帧计数 = 0
-        self._已提示的拒写: set[str] = set()
+        self._frame_count = 0
+        self._reported_refusals: set[str] = set()
 
         self._load_styles()
         self._setup_ui()
@@ -69,7 +73,7 @@ class MainWindow(QMainWindow):
         self._load_app_settings()
         self._load_profiles()
         self._refresh_joystick()
-        self._提示损坏方案()   # 必须在 _refresh_joystick 之后，否则会被它冲掉
+        self._warn_unreadable_profile()   # 必须在 _refresh_joystick 之后，否则会被它冲掉
 
         # 全应用唯一的 tick：60Hz 采样，面板每两帧重绘一次
         self._poll_timer = QTimer(self)
@@ -214,16 +218,27 @@ class MainWindow(QMainWindow):
 
     def _load_app_settings(self) -> None:
         self._app_state = load_app_state()
-        self._status_bar.set_launch_at_startup(self._app_state.launch_at_startup)
         self._status_bar.set_auto_start_mapping(self._app_state.auto_start_mapping)
-        if autostart_supported() and self._app_state.launch_at_startup:
+
+        # 注册表是「是否开机自启」的真相源，不是 app_state.json。
+        # 从前反过来：JSON 说启用就无条件重写注册表，于是用户在任务管理器里
+        # 禁用启动项后，下次开应用又被静默加回去。
+        enabled = autostart_enabled() if autostart_supported() else False
+        self._status_bar.set_launch_at_startup(enabled)
+        if enabled != self._app_state.launch_at_startup:
+            self._app_state.launch_at_startup = enabled
+            self._save_app_settings()
+
+        # 仍然重写一次，但只在确实已启用时 —— 保留「移动项目后路径自愈」，
+        # 同时不会把用户的禁用覆盖回去。
+        if enabled:
             try:
                 apply_autostart(True)
             except OSError as exc:
                 self._status_bar.set_status(f"自启动注册失败: {exc}")
 
     def _save_app_settings(self) -> None:
-        self._安全保存(lambda: save_app_state(self._app_state))
+        self._save_guarded(lambda: save_app_state(self._app_state))
 
     def _on_launch_at_startup_changed(self, enabled: bool) -> None:
         if not autostart_supported():
@@ -277,17 +292,17 @@ class MainWindow(QMainWindow):
 
     def _apply_profile(self, profile_id: str) -> None:
         if self._active is None:
-            self._active = ActiveProfile(profile_id, on_save_failed=self._报告拒写)
+            self._active = ActiveProfile(profile_id, on_save_failed=self._report_save_refused)
         else:
             self._active.switch_to(profile_id)
 
         # app_state.json 损坏时这里会拒写；不能让它把切方案和启动一起搞挂
-        self._安全保存(lambda: save_active_profile_id(profile_id))
-        self._把方案推给各消费者()
+        self._save_guarded(lambda: save_active_profile_id(profile_id))
+        self._push_profile_to_consumers()
 
-        self._提示损坏方案()
+        self._warn_unreadable_profile()
 
-    def _提示损坏方案(self) -> None:
+    def _warn_unreadable_profile(self) -> None:
         """当前方案文件读不了时，把原因写到状态栏
 
         在 __init__ 末尾要再调一次：_refresh_joystick 会写状态栏，
@@ -326,7 +341,7 @@ class MainWindow(QMainWindow):
             self._gate_dot.setStyleSheet(f"color: {THEME['warn']};")
             self._gate_label.setText(f"未对准 {name}")
 
-    def _把方案推给各消费者(self) -> None:
+    def _push_profile_to_consumers(self) -> None:
         """ActiveProfile 是唯一源头；table 和 engine 各持一份工作副本"""
         profile = self._active.profile
         mappings = self._active.mappings
@@ -341,10 +356,10 @@ class MainWindow(QMainWindow):
         self._apply_stick_settings(profile)
         self._engine.set_gate_checker(self._check_gate)
         self._update_gate_display()
-        self._提示损坏方案()
+        self._warn_unreadable_profile()
 
-    def _报告拒写(self, 消息: str) -> None:
-        self._status_bar.set_status(消息)
+    def _report_save_refused(self, message: str) -> None:
+        self._status_bar.set_status(message)
 
     def _on_profile_changed(self, index: int) -> None:
         if index < 0:
@@ -381,20 +396,20 @@ class MainWindow(QMainWindow):
             )
         self._update_gate_display()
 
-    def _安全保存(self, 动作) -> bool:
+    def _save_guarded(self, action) -> bool:
         """执行一次保存；文件读不了时不写入，只提示一次
 
         六个保存触发点全部经由这里，所以拒写的上报也只需要写在这一处。
         去重是必须的：拖一次滑块会触发几十次保存。
         """
         try:
-            动作()
+            action()
             return True
         except ConfigNotSavable as exc:
-            消息 = str(exc)
-            if 消息 not in self._已提示的拒写:
-                self._已提示的拒写.add(消息)
-                self._status_bar.set_status(消息)
+            message = str(exc)
+            if message not in self._reported_refusals:
+                self._reported_refusals.add(message)
+                self._status_bar.set_status(message)
             return False
 
     def _refresh_joystick(self):
@@ -421,15 +436,15 @@ class MainWindow(QMainWindow):
             return
 
         self._engine.consume(frame)
-        self._分派保留槽位(frame)
-        self._更新表格高亮(frame)
+        self._dispatch_reserved_slots(frame)
+        self._update_table_highlight(frame)
         self._update_gate_display()
 
-        self._帧计数 += 1
-        if self._帧计数 % 2 == 0:
+        self._frame_count += 1
+        if self._frame_count % 2 == 0:
             self._gamepad_panel.update_state(frame)
 
-    def _分派保留槽位(self, frame) -> None:
+    def _dispatch_reserved_slots(self, frame) -> None:
         """保留槽位的语义留在这里；边沿判定由 GamepadInput 负责"""
         if IDX_START in frame.just_pressed:
             self._toggle_mapping()
@@ -438,7 +453,7 @@ class MainWindow(QMainWindow):
         if IDX_LT in frame.just_short_released:
             self._focus_current_harness()
 
-    def _更新表格高亮(self, frame) -> None:
+    def _update_table_highlight(self, frame) -> None:
         for slot in frame.just_pressed:
             if slot not in (IDX_LT, IDX_START):
                 self._mapping_table.highlight_button(slot)
@@ -459,9 +474,9 @@ class MainWindow(QMainWindow):
 
     def _on_mapping_changed(self):
         self._active.set_mappings(self._mapping_table.get_mappings())
-        合并后 = self._active.mappings
-        self._engine.set_mappings(合并后)
-        self._mapping_table.load_mappings(合并后)
+        merged = self._active.mappings
+        self._engine.set_mappings(merged)
+        self._mapping_table.load_mappings(merged)
 
     def _on_threshold_changed(self, value: float):
         self._joystick.threshold = value

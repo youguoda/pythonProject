@@ -104,36 +104,34 @@ class JoystickManager:
                 self._layout,
             )
 
-            if js.get_numhats() > 0:
-                hx, hy = js.get_hat(0)
-                pressed[12] = hy > 0
-                pressed[13] = hy < 0
-                pressed[14] = hx < 0
-                pressed[15] = hx > 0
+            axis_count = js.get_numaxes()
+            hat = js.get_hat(0) if js.get_numhats() > 0 else None
 
-            if js.get_numaxes() >= 2:
-                lx, ly = js.get_axis(0), js.get_axis(1)
-                result.left_stick = (lx, ly)
-                pressed[18] = lx < -thr
-                pressed[19] = lx > thr
-                pressed[16] = ly < -thr
-                pressed[17] = ly > thr
+            if axis_count >= 2:
+                result.left_stick = (js.get_axis(0), js.get_axis(1))
+            if axis_count >= 4:
+                result.right_stick = (js.get_axis(2), js.get_axis(3))
+            if axis_count >= 6:
+                result.lt_value = (js.get_axis(4) + 1) / 2
+                result.rt_value = (js.get_axis(5) + 1) / 2
 
-            if js.get_numaxes() >= 4:
-                rx, ry = js.get_axis(2), js.get_axis(3)
-                result.right_stick = (rx, ry)
-                pressed[22] = rx > thr
-                pressed[23] = rx < -thr
-                pressed[20] = ry < -thr
-                pressed[21] = ry > thr
-
-            if js.get_numaxes() >= 6:
-                lt = (js.get_axis(4) + 1) / 2
-                rt = (js.get_axis(5) + 1) / 2
-                result.lt_value = lt
-                result.rt_value = rt
-                pressed[6] = lt > 0.5
-                pressed[7] = rt > 0.5
+            # 槽位从哪来由 SLOTS 声明，这里只按声明取值。
+            # 轴成对出现（左摇杆 0/1、右摇杆 2/3、扳机 4/5），
+            # 取用某个轴就要求它所在的那一对都存在 —— 与改造前的判断一致。
+            for slot in SLOTS:
+                src = slot.source
+                if src.kind == "button":
+                    continue
+                if src.kind == "hat":
+                    if hat is not None:
+                        pressed[slot.index] = hat[src.axis] * src.sign > 0
+                    continue
+                if axis_count < (src.axis // 2 + 1) * 2:
+                    continue
+                if src.kind == "stick":
+                    pressed[slot.index] = js.get_axis(src.axis) * src.sign > thr
+                elif src.kind == "trigger":
+                    pressed[slot.index] = (js.get_axis(src.axis) + 1) / 2 > 0.5
 
             return result
 

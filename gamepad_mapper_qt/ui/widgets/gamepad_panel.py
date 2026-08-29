@@ -62,13 +62,13 @@ class GamepadCanvas(QWidget):
         self._draw_stick(painter, w * 0.72, h * 0.62, w * 0.09, self._right_stick, "R")
 
         # 全部 24 个槽位由同一张表驱动
-        for 槽 in SLOTS:
-            px, py, pr = 槽.panel
-            pressed = self._pressed[槽.index] if 槽.index < len(self._pressed) else False
-            if 槽.render == "button":
+        for slot in SLOTS:
+            px, py, pr = slot.panel
+            pressed = self._pressed[slot.index] if slot.index < len(self._pressed) else False
+            if slot.render == "button":
                 self._draw_button(
                     painter, w * px, h * py, min(w, h) * pr,
-                    槽.color, 槽.name.split()[-1], pressed,
+                    slot.color, slot.name.split()[-1], pressed,
                 )
             elif pressed:  # dot：摇杆方向指示，按下才画
                 painter.setPen(Qt.PenStyle.NoPen)
@@ -115,14 +115,14 @@ class GamepadCanvas(QWidget):
         painter.drawText(QRectF(cx - r, cy + r + 2, r * 2, 18),
                          Qt.AlignmentFlag.AlignCenter, label)
 
-    def _draw_trigger(self, painter, x, y, w, h, value, 槽):
+    def _draw_trigger(self, painter, x, y, w, h, value, slot):
         painter.setPen(QPen(QColor(THEME["border"]), 1))
         painter.setBrush(QBrush(QColor(THEME["dim"])))
         painter.drawRoundedRect(QRectF(x, y, w, h), 4, 4)
 
         fill_w = w * max(0.0, min(1.0, value))
         if fill_w > 0:
-            grad_color = QColor(槽.color)
+            grad_color = QColor(slot.color)
             painter.setBrush(QBrush(grad_color))
             painter.setPen(Qt.PenStyle.NoPen)
             painter.drawRoundedRect(QRectF(x, y, fill_w, h), 4, 4)
@@ -130,7 +130,7 @@ class GamepadCanvas(QWidget):
         painter.setPen(QPen(QColor(THEME["subtext"])))
         font = QFont("Segoe UI", 11, QFont.Weight.DemiBold)
         painter.setFont(font)
-        painter.drawText(QRectF(x, y - 18, w, 16), Qt.AlignmentFlag.AlignCenter, 槽.name)
+        painter.drawText(QRectF(x, y - 18, w, 16), Qt.AlignmentFlag.AlignCenter, slot.name)
 
 
 class GamepadPanel(QFrame):
@@ -160,5 +160,5 @@ class GamepadPanel(QFrame):
 
     def set_info(self, text: str, connected: bool):
         self._info.setText(text)
-        色 = THEME["accent"] if connected else THEME["warn"]
-        self._info.setStyleSheet(f"color: {色}; font-size: 15px; font-weight: 600;")
+        color = THEME["accent"] if connected else THEME["warn"]
+        self._info.setStyleSheet(f"color: {color}; font-size: 15px; font-weight: 600;")

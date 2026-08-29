@@ -97,8 +97,8 @@ class GamepadInput:
             return replace(frame, connected=False)
 
         result = self._joystick.poll()
-        按下的槽位 = {i for i, on in enumerate(result.pressed) if on}
-        frame = self._edges.feed(pressed=按下的槽位, now=now)
+        pressed_slots = {i for i, on in enumerate(result.pressed) if on}
+        frame = self._edges.feed(pressed=pressed_slots, now=now)
         return replace(
             frame,
             connected=True,

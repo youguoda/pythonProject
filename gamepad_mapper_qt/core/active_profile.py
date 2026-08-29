@@ -30,10 +30,10 @@ class ActiveProfile:
         on_save_failed: Optional[Callable[[str], None]] = None,
     ) -> None:
         self._on_save_failed = on_save_failed
-        self._已上报: set[str] = set()
-        self._载入(profile_id)
+        self._reported: set[str] = set()
+        self._load(profile_id)
 
-    def _载入(self, profile_id: str) -> None:
+    def _load(self, profile_id: str) -> None:
         profile = load_profile(profile_id)
         if profile is None:
             profile = HarnessProfile(id=profile_id, display_name=profile_id)
@@ -62,25 +62,25 @@ class ActiveProfile:
 
         不需要先保存旧方案 —— 每次变更都已经立即落盘了。
         """
-        self._载入(profile_id)
+        self._load(profile_id)
 
     def set_threshold(self, value: float) -> None:
         self._profile.threshold = value
-        self._落盘()
+        self._persist()
 
     def set_mouse_sensitivity(self, value: float) -> None:
         self._profile.mouse_sensitivity = value
-        self._落盘()
+        self._persist()
 
     def set_scroll_sensitivity(self, value: float) -> None:
         self._profile.scroll_sensitivity = value
-        self._落盘()
+        self._persist()
 
     def set_mappings(self, mappings: Dict[int, str]) -> None:
-        self._profile.mappings = self._剥离统一鼠标层(mappings)
-        self._落盘()
+        self._profile.mappings = self._strip_universal_mouse(mappings)
+        self._persist()
 
-    def _剥离统一鼠标层(self, mappings: Dict[int, str]) -> Dict[int, str]:
+    def _strip_universal_mouse(self, mappings: Dict[int, str]) -> Dict[int, str]:
         """与统一层取值相同的项不写盘，免得每个方案重复一遍
 
         这是 effective_mappings 的逆操作 —— 两者必须待在一起，
@@ -89,21 +89,21 @@ class ActiveProfile:
         if not self._profile.universal_mouse:
             return dict(mappings)
         return {
-            槽位: 动作
-            for 槽位, 动作 in mappings.items()
-            if UNIVERSAL_MOUSE_MAPPINGS.get(槽位) != 动作
+            slot: action
+            for slot, action in mappings.items()
+            if UNIVERSAL_MOUSE_MAPPINGS.get(slot) != action
         }
 
-    def _落盘(self) -> None:
+    def _persist(self) -> None:
         try:
             save_profile(self._profile)
         except ConfigNotSavable as exc:
-            self._上报失败(str(exc))
+            self._report_failure(str(exc))
 
-    def _上报失败(self, 消息: str) -> None:
+    def _report_failure(self, message: str) -> None:
         """同一个原因只报一次 —— 拖一次滑块会触发几十次保存"""
-        if 消息 in self._已上报:
+        if message in self._reported:
             return
-        self._已上报.add(消息)
+        self._reported.add(message)
         if self._on_save_failed:
-            self._on_save_failed(消息)
+            self._on_save_failed(message)

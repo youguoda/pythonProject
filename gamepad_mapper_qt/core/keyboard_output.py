@@ -46,13 +46,13 @@ class KeyboardOutput:
             return
 
         if "+" in key_name and key_name not in ("+",):
-            已按下: list[str] = []
+            pressed_parts: list[str] = []
             try:
                 for part in self._parse_combo(key_name):
                     self._controller.press(self._resolve_key(part))
-                    已按下.append(part)
+                    pressed_parts.append(part)
             except Exception:
-                for part in reversed(已按下):
+                for part in reversed(pressed_parts):
                     try:
                         self._controller.release(self._resolve_key(part))
                     except Exception:
@@ -64,21 +64,41 @@ class KeyboardOutput:
         self._pressed.add(key_name)
 
     def release(self, key_name: str) -> None:
+        """松开一个键或组合键。
+
+        与 press 对称：失败向上抛，由调用方决定怎么上报。
+        但组合键中途失败时**继续松开剩下的部分**再抛 —— 这里和 press 相反，
+        press 要回滚已按下的，release 要尽力把能松的都松开，否则修饰键卡住。
+        无论成败都从已按下集合移除：留着它只会让 release_all 反复失败。
+        """
         if key_name not in self._pressed:
             return
-        try:
-            if "+" in key_name and key_name not in ("+",):
-                for part in reversed(self._parse_combo(key_name)):
+
+        self._pressed.discard(key_name)
+        first_error = None
+
+        if "+" in key_name and key_name not in ("+",):
+            for part in reversed(self._parse_combo(key_name)):
+                try:
                     self._controller.release(self._resolve_key(part))
-            else:
-                self._controller.release(self._resolve_key(key_name))
-            self._pressed.discard(key_name)
-        except Exception:
-            pass
+                except Exception as exc:
+                    first_error = first_error or exc
+        else:
+            self._controller.release(self._resolve_key(key_name))
+
+        if first_error is not None:
+            raise first_error
 
     def release_all(self) -> None:
+        """尽力松开全部；单个键失败不影响其余，最后抛第一个错误"""
+        first_error = None
         for key_name in list(self._pressed):
-            self.release(key_name)
+            try:
+                self.release(key_name)
+            except Exception as exc:
+                first_error = first_error or exc
+        if first_error is not None:
+            raise first_error
 
     @property
     def pressed_keys(self) -> Set[str]:

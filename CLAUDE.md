@@ -58,7 +58,9 @@ Windows 专属：`core/mouse_output.py`、`core/window_focus.py`、`core/autosta
 
 注意 20–23 的顺序是 `Right Stick Up / Down / Right / Left`——右摇杆的左右和左摇杆（18=Left, 19=Right）是反的，这是有意的，`joystick_manager.poll()` 与之对应。
 
-`poll()` 里从 hat/axis 到槽位的赋值**仍是硬编码的过程式代码**，不由 `SLOTS` 驱动。加一个槽位需要改两处：`SLOTS` 追加一条，`poll()` 里加读取代码。
+每个 `Slot` 还带一个 `source`，声明它的状态从手柄哪里读：`button`（物理按钮，由 `apply_hardware_buttons` 按布局填）、`hat`（十字键，axis 0=x/1=y 加正负号）、`stick`（摇杆方向，与 threshold 比）、`trigger`（扳机，归一化后 >0.5）。`poll()` 遍历 `SLOTS` 按声明取值，不再是硬编码过程。**加一个槽位现在只改 `SLOTS` 一处。**
+
+轴是成对出现的（左摇杆 0/1、右摇杆 2/3、扳机 4/5），取用某个轴要求它所在的那一对都存在 —— `轴数 < (axis // 2 + 1) * 2` 就跳过，与改造前的判断一致。
 
 ### 硬件 → 逻辑的转换层
 
@@ -164,7 +166,11 @@ UI 侧全部经由 `MainWindow._安全保存()` 这一个漏斗接住 `ConfigNot
 
 ### 开机自启
 
-`core/autostart.py` 写 HKCU 的 `Software\Microsoft\Windows\CurrentVersion\Run`，值名 `GamepadVibeController`，命令里把 `python.exe` 换成同目录 `pythonw.exe` 以免弹黑框。注册的是**源码路径 + 当前解释器**，移动项目目录或换 venv 后需要在 UI 里重新勾选一次。
+`core/autostart.py` 写 HKCU 的 `Software\Microsoft\Windows\CurrentVersion\Run`，值名 `GamepadVibeController`，命令里把 `python.exe` 换成同目录 `pythonw.exe` 以免弹黑框。
+
+**注册表是「是否开机自启」的真相源**，不是 `app_state.json`。启动时 `_load_app_settings` 读 `is_enabled()` 决定复选框状态，并把 JSON 同步过来。从前反过来 —— JSON 说启用就无条件重写注册表，于是用户在任务管理器里禁用启动项后，下次开应用又被静默加回去。
+
+仅当注册表**已启用**时才重写一次，以刷新命令里的解释器与源码路径（移动项目或重建 venv 后自愈），同时不会把用户的禁用覆盖回去。
 
 ## UI 层
 

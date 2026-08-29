@@ -245,6 +245,12 @@ class GamepadCanvas(QWidget):
         pressed = self._pressed[slot.index] if slot.index < len(self._pressed) else False
         kind = slot.render
 
+        if self._hover == slot.index:
+            hl = QColor(255, 255, 255, 40)
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.setBrush(QBrush(hl))
+            painter.drawEllipse(QPointF(cx, cy), r * 1.75, r * 1.75)
+
         if kind == "button":
             self._draw_round_button(painter, cx, cy, r, slot, pressed)
         elif kind == "bumper":

@@ -8,7 +8,7 @@ from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtGui import QShortcut, QKeySequence
 from PyQt6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
-    QLabel, QPushButton, QFrame, QMessageBox, QComboBox,
+    QLabel, QPushButton, QFrame, QMessageBox, QComboBox, QCheckBox,
 )
 
 from core.button_map import IDX_LT, IDX_START
@@ -17,6 +17,7 @@ from core.constants import (
     LT_LONG_PRESS_SEC, PROFILE_ORDER,
 )
 from core.active_profile import ActiveProfile
+from core.slots import CONFLICT, binding_kind, conflict_reason
 from core.autostart import (
     apply_enabled as apply_autostart,
     is_enabled as autostart_enabled,
@@ -34,7 +35,6 @@ from core.config_store import (
     save_active_profile_id,
 )
 from core.gamepad_input import GamepadInput
-from core.slots import conflict_reason
 from core.joystick_manager import JoystickManager
 from core.keyboard_output import KeyboardOutput
 from core.mapping_engine import MappingEngine
@@ -166,7 +166,7 @@ class MainWindow(QMainWindow):
 
         table_header = QHBoxLayout()
         table_header.setSpacing(12)
-        table_title = QLabel("按键映射")
+        table_title = QLabel("已绑定")
         table_title.setObjectName("sectionLabel")
         table_header.addWidget(table_title)
         table_header.addStretch()
@@ -176,6 +176,17 @@ class MainWindow(QMainWindow):
         focus_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         focus_btn.clicked.connect(self._focus_current_harness)
         table_header.addWidget(focus_btn)
+
+        self._show_unbound_check = QCheckBox("显示未绑定")
+        self._show_unbound_check.setObjectName("optionCheck")
+        self._show_unbound_check.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._show_unbound_check.setToolTip(
+            "默认只列出已绑定的键；勾选后显示其余可绑槽位（摇杆方向在图上不好点）"
+        )
+        self._show_unbound_check.toggled.connect(
+            lambda on: self._mapping_table.set_show_unbound(on)
+        )
+        table_header.addWidget(self._show_unbound_check)
 
         clear_all_btn = QPushButton("全部清除")
         clear_all_btn.setObjectName("clearBtn")
@@ -202,6 +213,8 @@ class MainWindow(QMainWindow):
 
     def _connect_signals(self):
         self._mapping_table.bind_requested.connect(self._open_bind_dialog)
+        self._gamepad_panel.slot_clicked.connect(self._on_slot_clicked)
+        self._gamepad_panel.slot_refused.connect(self._on_slot_refused)
         self._gamepad_panel.slot_clicked.connect(self._open_bind_dialog)
         self._gamepad_panel.slot_refused.connect(self._explain_reserved_slot)
         self._mapping_table.mapping_changed.connect(self._on_mapping_changed)
@@ -466,6 +479,16 @@ class MainWindow(QMainWindow):
 
     def _explain_reserved_slot(self, slot: int):
         """保留槽位点了不弹绑定框，而是说明它已被什么占用"""
+        self._status_bar.set_status(conflict_reason(slot))
+
+    def _on_slot_clicked(self, slot: int) -> None:
+        """点手柄图上的键 —— 这是绑定的主入口"""
+        if binding_kind(slot) == CONFLICT:
+            self._status_bar.set_status(f"注意：{conflict_reason(slot)}")
+        self._open_bind_dialog(slot)
+
+    def _on_slot_refused(self, slot: int) -> None:
+        """保留槽位不给绑，但要说清它被什么占用了"""
         self._status_bar.set_status(conflict_reason(slot))
 
     def _open_bind_dialog(self, button_index: int):

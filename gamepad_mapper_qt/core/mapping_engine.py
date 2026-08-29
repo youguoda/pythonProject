@@ -48,9 +48,12 @@ class MappingEngine(QObject):
         self._rt_voice_held = False
         self._last_gate_open = True
         self._last_gate_label = ""
+        self._已报错的动作: set[str] = set()
 
     def set_mappings(self, mappings: Dict[int, str]) -> None:
         self._mappings = dict(mappings)
+        # 改了绑定就重新给每个动作一次上报机会
+        self._已报错的动作.clear()
 
     def set_gate_checker(self, checker: Optional[Callable[[], bool]]) -> None:
         self._gate_checker = checker
@@ -125,13 +128,27 @@ class MappingEngine(QObject):
             self._release_all_output()
             return
 
+        # 逐槽位捕获：一个键发不出去，不该让同一帧的其他键跟着失效
         for slot in frame.just_pressed:
-            self._按下(slot)
+            self._试(slot, self._按下)
         for slot in frame.just_released:
-            self._松开(slot)
+            self._试(slot, self._松开)
 
         self._处理语音(frame.rt_value)
         self._处理鼠标(frame)
+
+    def _试(self, slot: int, 动作) -> None:
+        try:
+            动作(slot)
+        except Exception as exc:
+            self._报告失败(self._mappings.get(slot, f"槽位 {slot}"), exc)
+
+    def _报告失败(self, action: str, exc: Exception) -> None:
+        """同一个动作只上报一次，否则按住无效键会 60Hz 刷屏"""
+        if action in self._已报错的动作:
+            return
+        self._已报错的动作.add(action)
+        self.error_occurred.emit(f"按键「{action}」发送失败: {exc}")
 
     def _按下(self, slot: int) -> None:
         if slot in _保留槽位:

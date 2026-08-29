@@ -17,13 +17,12 @@
     "4": "ctrl+shift+tab",
     "5": "ctrl+tab",
     "8": "ctrl+c",
-    "10": "@mouse:left",
-    "11": "@mouse:right",
     "12": "shift+tab",
     "13": "enter"
   },
   "threshold": 0.5,
   "mouse_sensitivity": 20.0,
   "stick_deadzone": 0.15,
-  "scroll_sensitivity": 0.35
+  "scroll_sensitivity": 0.35,
+  "universal_mouse": true
 }

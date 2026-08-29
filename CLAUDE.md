@@ -4,10 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## 仓库构成
 
-| 路径 | 说明 |
-|------|------|
-| `gamepad_mapper_qt/` | **唯一活跃项目**：PyQt6 手柄映射器 v2.0 |
-| `main.py`、`test1.py`（根目录） | 早期 argparse 脚手架残留，与手柄项目无关，可删 |
+仓库里只有一个项目：`gamepad_mapper_qt/`，PyQt6 手柄映射器 v2.0。根目录只放 `CLAUDE.md`、`CONTEXT.md` 和 `docs/`。
 
 早期的 tkinter 版本（`gamepad_mapper/`，v1 / v2 / v3.5 Pro）曾以嵌套 Git 仓库的形式存在于此，remote 指向 `longsongline/gamepad_mapper`，现已从本地删除。它从未被根仓库跟踪，所以本仓库历史里找不到它。
 
@@ -37,7 +34,11 @@ gamepad_mapper_qt/.venv/Scripts/python.exe -m pytest
 gamepad_mapper_qt/.venv/Scripts/python.exe -m pytest tests/test_edge_detector.py -k 长按
 ```
 
-测试只覆盖 `core/gamepad_input.py`（边沿判定与接线），不需要手柄也不需要 Qt。**其余部分仍然没有测试覆盖** —— `MappingEngine.consume` 要断言「发出了什么按键」，得先把 `KeyboardOutput` / `MouseOutput` 的依赖改成注入（它们目前在 `__init__` 里自己 new pynput 和 `ctypes.windll`），那是独立的一项工作。
+测试覆盖 `core/gamepad_input.py`（边沿判定与接线）、`core/mapping_engine.py`（按键/鼠标输出、闸门、RT 语音、失败上报）和 `core/keyboard_output.py`（组合键回滚），全部不需要手柄也不需要 Qt。
+
+`MappingEngine` 和 `KeyboardOutput` 都接受注入的依赖，测试传假对象即可 —— 靠鸭子类型，没有定义 Protocol。`MouseOutput` 在 `__init__` 里抓 `ctypes.windll`，`KeyboardOutput` 默认 new 一个 pynput controller（可用 `controller=` 覆盖），但测试里都不需要构造它们。
+
+**仍无覆盖**：`ui/` 全部、`config_store` 的存取往返、`window_focus` 的 Win32 调用。
 
 没有 linter、没有 CI，也没有打包步骤（不出 exe，直接跑源码）。开发依赖在 `requirements-dev.txt`。
 

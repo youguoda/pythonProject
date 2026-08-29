@@ -1,23 +1,29 @@
 # -*- coding: utf-8 -*-
-"""映射引擎 — 后台线程（闸门 / 语音 / 鼠标）"""
+"""映射引擎 — 消费输入帧，产生键盘/鼠标输出（闸门 / 语音 / 鼠标）"""
 
 from typing import Callable, Dict, Optional
 
-from PyQt6.QtCore import QThread, pyqtSignal
+from PyQt6.QtCore import QObject, pyqtSignal
 
+from core.button_map import IDX_LT, IDX_RT
 from core.constants import (
-    BUTTON_NAMES,
     MOUSE_LEFT,
     MOUSE_RIGHT,
     VOICE_KEY,
 )
-from core.joystick_manager import JoystickManager
+from core.gamepad_input import InputFrame
 from core.keyboard_output import KeyboardOutput
 from core.mouse_output import MouseOutput
 
+# 引擎不处理的保留槽位：LT 归 MainWindow（聚焦/切方案），RT 恒为语音键
+_保留槽位 = (IDX_LT, IDX_RT)
 
-class MappingEngine(QThread):
-    """60Hz 映射线程"""
+
+class MappingEngine(QObject):
+    """把 InputFrame 翻译成键盘与鼠标输出
+
+    不再自己轮询，也不再是线程 —— 由主循环每帧调用 consume()。
+    """
 
     state_changed = pyqtSignal(bool)
     error_occurred = pyqtSignal(str)
@@ -25,19 +31,15 @@ class MappingEngine(QThread):
 
     def __init__(
         self,
-        joystick: JoystickManager,
         keyboard: KeyboardOutput,
         mouse: MouseOutput,
         parent=None,
     ):
         super().__init__(parent)
-        self._joystick = joystick
         self._keyboard = keyboard
         self._mouse = mouse
         self._mappings: Dict[int, str] = {}
         self._active = False
-        self._prev_pressed = [False] * len(BUTTON_NAMES)
-        self._prev_axis = [0.0] * 6
         self._gate_checker: Optional[Callable[[], bool]] = None
         self._process_names: list[str] = []
         self._mouse_sensitivity = 12.0
@@ -70,19 +72,12 @@ class MappingEngine(QThread):
         if self._active:
             return
         self._active = True
-        self._prev_pressed = [False] * len(BUTTON_NAMES)
-        self._prev_axis = [0.0] * 6
         self._rt_voice_held = False
-        if not self.isRunning():
-            self.start()
         self.state_changed.emit(True)
 
     def stop_mapping(self) -> None:
         self._active = False
-        self._release_rt_voice()
-        self._keyboard.release_all()
-        self._mouse.left_up()
-        self._mouse.right_up()
+        self._release_all_output()
         self.state_changed.emit(False)
 
     @property
@@ -106,113 +101,86 @@ class MappingEngine(QThread):
             self._keyboard.release(VOICE_KEY)
             self._rt_voice_held = False
 
-    def run(self) -> None:
-        while True:
-            if not self._active:
-                self.msleep(50)
-                if not self.isRunning():
-                    break
-                continue
+    def _release_all_output(self) -> None:
+        self._release_rt_voice()
+        self._keyboard.release_all()
+        self._mouse.left_up()
+        self._mouse.right_up()
 
-            try:
-                self._tick()
-            except Exception as exc:
-                self.error_occurred.emit(str(exc))
-            self.msleep(16)
-
-    def _tick(self) -> None:
-        if not self._joystick.connected:
+    def consume(self, frame: InputFrame) -> None:
+        """处理一帧输入。由主循环调用，不自己计时。"""
+        if not self._active or not frame.connected:
             return
 
-        result = self._joystick.poll()
-        mappings = self._mappings
+        try:
+            self._consume(frame)
+        except Exception as exc:
+            self.error_occurred.emit(str(exc))
+
+    def _consume(self, frame: InputFrame) -> None:
         gate_open = self._is_gate_open()
         self._emit_gate_state(gate_open)
 
         if not gate_open:
-            self._release_rt_voice()
-            self._keyboard.release_all()
-            self._mouse.left_up()
-            self._mouse.right_up()
-            self._prev_pressed = list(result.pressed)
-            lx, ly = result.left_stick
-            rx, ry = result.right_stick
-            self._prev_axis[0], self._prev_axis[1] = lx, ly
-            self._prev_axis[2], self._prev_axis[3] = rx, ry
-            self._prev_axis[4] = result.lt_value * 2 - 1
-            self._prev_axis[5] = result.rt_value * 2 - 1
+            self._release_all_output()
             return
 
-        for bi, pressed in enumerate(result.pressed):
-            if bi in (6, 7):
-                continue
-            action = mappings.get(bi)
-            if not action:
-                self._prev_pressed[bi] = pressed
-                continue
+        for slot in frame.just_pressed:
+            self._按下(slot)
+        for slot in frame.just_released:
+            self._松开(slot)
 
-            if action == MOUSE_LEFT:
-                if pressed != self._prev_pressed[bi]:
-                    if pressed:
-                        self._mouse.left_down()
-                    else:
-                        self._mouse.left_up()
-                self._prev_pressed[bi] = pressed
-                continue
+        self._处理语音(frame.rt_value)
+        self._处理鼠标(frame)
 
-            if action == MOUSE_RIGHT:
-                if pressed != self._prev_pressed[bi]:
-                    if pressed:
-                        self._mouse.right_down()
-                    else:
-                        self._mouse.right_up()
-                self._prev_pressed[bi] = pressed
-                continue
+    def _按下(self, slot: int) -> None:
+        if slot in _保留槽位:
+            return
+        action = self._mappings.get(slot)
+        if not action:
+            return
+        if action == MOUSE_LEFT:
+            self._mouse.left_down()
+        elif action == MOUSE_RIGHT:
+            self._mouse.right_down()
+        else:
+            self._keyboard.press(action)
 
-            if bi < 12:
-                if pressed != self._prev_pressed[bi]:
-                    if pressed:
-                        self._keyboard.press(action)
-                    else:
-                        self._keyboard.release(action)
-            else:
-                if pressed and not self._prev_pressed[bi]:
-                    self._keyboard.press(action)
-                elif not pressed and self._prev_pressed[bi]:
-                    self._keyboard.release(action)
-            self._prev_pressed[bi] = pressed
+    def _松开(self, slot: int) -> None:
+        if slot in _保留槽位:
+            return
+        action = self._mappings.get(slot)
+        if not action:
+            return
+        if action == MOUSE_LEFT:
+            self._mouse.left_up()
+        elif action == MOUSE_RIGHT:
+            self._mouse.right_up()
+        else:
+            self._keyboard.release(action)
 
-        rt = result.rt_value
-        rt_pressed = rt > 0.5
+    def _处理语音(self, rt_value: float) -> None:
+        rt_pressed = rt_value > 0.5
         if rt_pressed and not self._rt_voice_held:
             self._keyboard.press(VOICE_KEY)
             self._rt_voice_held = True
         elif not rt_pressed and self._rt_voice_held:
             self._keyboard.release(VOICE_KEY)
             self._rt_voice_held = False
-        self._prev_pressed[7] = rt_pressed
 
-        lx, ly = result.left_stick
+    def _处理鼠标(self, frame: InputFrame) -> None:
         dz = self._stick_deadzone
+
+        lx, ly = frame.left_stick
         if abs(lx) > dz or abs(ly) > dz:
             self._mouse.move(lx, ly, self._mouse_sensitivity)
 
-        _, ry = result.right_stick
+        _, ry = frame.right_stick
         if ry < -dz:
             self._mouse.wheel(self._scroll_sensitivity)
         elif ry > dz:
             self._mouse.wheel(-self._scroll_sensitivity)
 
-        lt = result.lt_value
-        self._prev_axis[0], self._prev_axis[1] = lx, ly
-        rx, ry = result.right_stick
-        self._prev_axis[2], self._prev_axis[3] = rx, ry
-        self._prev_axis[4] = lt * 2 - 1
-        self._prev_axis[5] = rt * 2 - 1
-        self._prev_pressed[6] = lt > 0.5
-
     def terminate_engine(self) -> None:
         self._active = False
-        self._release_rt_voice()
-        self._keyboard.release_all()
-        self.wait(2000)
+        self._release_all_output()

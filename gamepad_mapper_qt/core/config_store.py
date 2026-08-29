@@ -20,11 +20,17 @@ PROFILES_DIR = "profiles"
 APP_STATE_FILE = "app_state.json"
 
 
+class ConfigNotSavable(Exception):
+    """配置来自一个读不了的文件，写回去会毁掉用户原本的内容"""
+
+
 @dataclass
 class AppState:
     active_profile: str = PROFILE_ORDER[0]
     launch_at_startup: bool = False
     auto_start_mapping: bool = False
+    # 与 HarnessProfile.savable 同义：读不了的文件不许写回去
+    savable: bool = True
 
 
 @dataclass
@@ -38,6 +44,8 @@ class HarnessProfile:
     stick_deadzone: float = DEFAULT_STICK_DEADZONE
     scroll_sensitivity: float = DEFAULT_SCROLL_SENSITIVITY
     universal_mouse: bool = True
+    # 从损坏/读不了的文件加载出来的是 False —— save_profile 会拒绝覆盖它
+    savable: bool = True
 
 
 def effective_mappings(profile: HarnessProfile) -> Dict[int, str]:
@@ -84,7 +92,9 @@ def load_profile(profile_id: str) -> Optional[HarnessProfile]:
         with open(path, "r", encoding="utf-8") as f:
             data = json.load(f)
     except (json.JSONDecodeError, OSError):
-        return None
+        # 文件在但读不了 —— 和「不存在」是两回事。标记为不可保存，
+        # 免得后续任何一次保存把用户的配置覆盖成空。
+        return HarnessProfile(id=profile_id, display_name=profile_id, savable=False)
 
     mappings: Dict[int, str] = {}
     raw = data.get("mappings", {})
@@ -110,6 +120,11 @@ def load_profile(profile_id: str) -> Optional[HarnessProfile]:
 
 
 def save_profile(profile: HarnessProfile) -> None:
+    if not profile.savable:
+        raise ConfigNotSavable(
+            f"方案「{profile.id}」的文件读取失败，已停止写入以免覆盖原有配置"
+        )
+
     directory = _profiles_dir()
     os.makedirs(directory, exist_ok=True)
     path = os.path.join(directory, f"{profile.id}.json")
@@ -138,7 +153,7 @@ def load_app_state() -> AppState:
         with open(path, "r", encoding="utf-8") as f:
             data = json.load(f)
     except (json.JSONDecodeError, OSError):
-        return AppState()
+        return AppState(savable=False)
 
     return AppState(
         active_profile=data.get("active_profile", PROFILE_ORDER[0]),
@@ -148,6 +163,11 @@ def load_app_state() -> AppState:
 
 
 def save_app_state(state: AppState) -> None:
+    if not state.savable:
+        raise ConfigNotSavable(
+            "app_state.json 读取失败，已停止写入以免覆盖原有设置"
+        )
+
     path = _app_state_path()
     os.makedirs(os.path.dirname(path), exist_ok=True)
     data = {

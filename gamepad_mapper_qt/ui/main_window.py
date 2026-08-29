@@ -19,6 +19,7 @@ from core.constants import (
 from core.autostart import apply_enabled as apply_autostart, is_supported as autostart_supported
 from core.config_store import (
     AppState,
+    ConfigNotSavable,
     HarnessProfile,
     effective_mappings,
     list_profile_ids,
@@ -63,6 +64,7 @@ class MainWindow(QMainWindow):
         self._gate_open = False
         self._app_state = AppState()
         self._帧计数 = 0
+        self._已提示的拒写: set[str] = set()
 
         self._load_styles()
         self._setup_ui()
@@ -70,6 +72,7 @@ class MainWindow(QMainWindow):
         self._load_app_settings()
         self._load_profiles()
         self._refresh_joystick()
+        self._提示损坏方案()   # 必须在 _refresh_joystick 之后，否则会被它冲掉
 
         # 全应用唯一的 tick：60Hz 采样，面板每两帧重绘一次
         self._poll_timer = QTimer(self)
@@ -223,7 +226,7 @@ class MainWindow(QMainWindow):
                 self._status_bar.set_status(f"自启动注册失败: {exc}")
 
     def _save_app_settings(self) -> None:
-        save_app_state(self._app_state)
+        self._安全保存(lambda: save_app_state(self._app_state))
 
     def _on_launch_at_startup_changed(self, enabled: bool) -> None:
         if not autostart_supported():
@@ -262,7 +265,12 @@ class MainWindow(QMainWindow):
         self._profile_combo.clear()
         for pid in self._profile_ids:
             profile = load_profile(pid)
-            label = profile.display_name if profile else pid
+            if profile and not profile.savable:
+                label = f"⚠ {pid}（读取失败）"
+            elif profile:
+                label = profile.display_name
+            else:
+                label = pid
             self._profile_combo.addItem(label, pid)
         idx = self._profile_ids.index(active_id) if active_id in self._profile_ids else 0
         self._profile_combo.setCurrentIndex(idx)
@@ -275,7 +283,8 @@ class MainWindow(QMainWindow):
         if not profile:
             profile = HarnessProfile(id=profile_id, display_name=profile_id)
         self._profile = profile
-        save_active_profile_id(profile_id)
+        # app_state.json 损坏时这里会拒写；不能让它把切方案和启动一起搞挂
+        self._安全保存(lambda: save_active_profile_id(profile_id))
 
         self._mappings = effective_mappings(profile)
         self._threshold = profile.threshold
@@ -289,6 +298,20 @@ class MainWindow(QMainWindow):
         self._apply_stick_settings(profile)
         self._engine.set_gate_checker(self._check_gate)
         self._update_gate_display()
+
+        self._提示损坏方案()
+
+    def _提示损坏方案(self) -> None:
+        """当前方案文件读不了时，把原因写到状态栏
+
+        在 __init__ 末尾要再调一次：_refresh_joystick 会写状态栏，
+        否则启动时这条解释会被「手柄已连接」冲掉。
+        """
+        if self._profile and not self._profile.savable:
+            self._status_bar.set_status(
+                f"⚠ config/profiles/{self._profile.id}.json 读取失败（JSON 格式有误）。"
+                "映射显示为空，已停止写入以免覆盖你原有的配置。修复文件后重启生效。"
+            )
 
     def _apply_stick_settings(self, profile: HarnessProfile) -> None:
         self._engine.set_mouse_settings(
@@ -367,14 +390,30 @@ class MainWindow(QMainWindow):
             )
         self._update_gate_display()
 
+    def _安全保存(self, 动作) -> bool:
+        """执行一次保存；文件读不了时不写入，只提示一次
+
+        六个保存触发点全部经由这里，所以拒写的上报也只需要写在这一处。
+        去重是必须的：拖一次滑块会触发几十次保存。
+        """
+        try:
+            动作()
+            return True
+        except ConfigNotSavable as exc:
+            消息 = str(exc)
+            if 消息 not in self._已提示的拒写:
+                self._已提示的拒写.add(消息)
+                self._status_bar.set_status(消息)
+            return False
+
     def _save_current_profile(self) -> None:
         if not self._profile:
             return
         table_mappings = self._mapping_table.get_mappings()
         self._profile.mappings = self._mappings_for_save(table_mappings)
         self._profile.threshold = self._joystick.threshold
-        save_profile(self._profile)
-        self._mappings = effective_mappings(self._profile)
+        if self._安全保存(lambda: save_profile(self._profile)):
+            self._mappings = effective_mappings(self._profile)
 
     def _refresh_joystick(self):
         if self._engine.is_active:

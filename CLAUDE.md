@@ -121,6 +121,24 @@ _更新表格高亮(frame)
 
 保存时机很密：改映射、改滑块、切方案、关窗口都会立刻 `save_profile()`，没有"取消"路径。
 
+### 读不了的文件绝不写回去
+
+`HarnessProfile` 和 `AppState` 都有 `savable` 字段。加载时区分三种情况：
+
+| 情况 | `load_profile` 返回 |
+|------|------|
+| 文件不存在 | `None`（合法，新方案） |
+| 文件存在但 JSON/OS 读取失败 | `savable=False` 的对象 |
+| 正常 | `savable=True` 的对象 |
+
+`save_profile` / `save_app_state` 在碰磁盘之前检查 `savable`，为假则抛 `ConfigNotSavable`。
+
+**守卫故意放在写入侧而不是读取侧**：即使调用方忘记检查，文件也不会被覆盖。曾经的 bug 正是「损坏 → 静默替换成空 profile → 下一次保存覆盖原文件」，六个保存触发点无一幸免。
+
+UI 侧全部经由 `MainWindow._安全保存()` 这一个漏斗接住 `ConfigNotSavable`，按消息去重（拖一次滑块会触发几十次保存）。`_apply_profile` 里包住 `save_active_profile_id` 是必须的 —— 它每次切方案和启动都跑，不接住会让应用启动失败。
+
+损坏的方案在下拉框里显示 `⚠ <id>（读取失败）`。`_提示损坏方案()` 在 `__init__` 里 `_refresh_joystick()` **之后**再调一次，否则状态栏的解释会被「手柄已连接」冲掉。
+
 ### 键名格式
 
 映射值是 pynput 风格的小写键名，`+` 分隔组合键（如 `ctrl+shift+tab`）。`KeyboardOutput._resolve_key` 里有一张别名表（`pageup`→`page_up`、`win`/`super`→`cmd`）。新增可绑定按键通常要同时动三处：`constants.KEYBOARD_KEYS`、`key_bind_dialog._QT_KEY_MAP`（Qt 键码 → pynput 名）、以及必要时的别名表。`_KEY_PRESETS` 里放的是对话框抓不到的系统级快捷键（Win+Tab 等），只能预设写入。

@@ -11,6 +11,15 @@ IDX_START = 9
 IDX_L3 = 10
 IDX_R3 = 11
 
+# 引擎在发键时跳过的槽位：LT 归 MainWindow（聚焦/切方案），RT 恒为语音键。
+ENGINE_SKIPPED = (IDX_LT, IDX_RT)
+
+# UI 拒绝绑定的槽位 —— 比 ENGINE_SKIPPED 多一个 Start。
+# 这个不对称是真实的：引擎并不跳过 Start，所以手改 profile 绑了 Start，
+# 按下时会「既发出那个键、又启停映射」。UI 不给绑是为了避免这个隐藏冲突，
+# 但它不是引擎层面的保证。
+UI_RESERVED = (IDX_LT, IDX_RT, IDX_START)
+
 # SDL Xbox 360 / Xbox One 常见布局
 XBOX_HW_TO_LOGICAL = {
     0: 0,   # A

@@ -34,6 +34,7 @@ from core.config_store import (
     save_active_profile_id,
 )
 from core.gamepad_input import GamepadInput
+from core.slots import conflict_reason
 from core.joystick_manager import JoystickManager
 from core.keyboard_output import KeyboardOutput
 from core.mapping_engine import MappingEngine
@@ -201,6 +202,8 @@ class MainWindow(QMainWindow):
 
     def _connect_signals(self):
         self._mapping_table.bind_requested.connect(self._open_bind_dialog)
+        self._gamepad_panel.slot_clicked.connect(self._open_bind_dialog)
+        self._gamepad_panel.slot_refused.connect(self._explain_reserved_slot)
         self._mapping_table.mapping_changed.connect(self._on_mapping_changed)
         self._status_bar.start_stop_clicked.connect(self._toggle_mapping)
         self._status_bar.threshold_changed.connect(self._on_threshold_changed)
@@ -460,6 +463,10 @@ class MainWindow(QMainWindow):
         for slot in frame.just_released:
             if slot not in (IDX_LT, IDX_START):
                 self._mapping_table.clear_highlight_if(slot)
+
+    def _explain_reserved_slot(self, slot: int):
+        """保留槽位点了不弹绑定框，而是说明它已被什么占用"""
+        self._status_bar.set_status(conflict_reason(slot))
 
     def _open_bind_dialog(self, button_index: int):
         if self._engine.is_active:

@@ -1,29 +1,56 @@
 # -*- coding: utf-8 -*-
-"""可视化手柄面板"""
+"""可视化手柄面板
+
+按 Xbox 手柄的真实布局绘制：非对称摇杆（左摇杆左上、D-Pad 左下、
+ABXY 右上、右摇杆右下），扳机与肩键在顶边。
+"""
 
 from typing import List
 
-from PyQt6.QtCore import Qt, QRectF, QPointF
-from PyQt6.QtGui import QPainter, QColor, QPen, QBrush, QRadialGradient, QFont
+from PyQt6.QtCore import Qt, QRectF, QPointF, pyqtSignal
+from PyQt6.QtGui import (
+    QPainter, QColor, QPen, QBrush, QRadialGradient, QLinearGradient,
+    QFont, QPainterPath,
+)
 from PyQt6.QtWidgets import QWidget, QVBoxLayout, QLabel, QFrame
 
 from core.constants import THEME
 from core.joystick_manager import PollResult
 from core.button_map import IDX_LT, IDX_RT
-from core.slots import SLOTS
+# 扇形的几何常量从 slots 引入，不在这里再写一份 ——
+# 绘制与命中检测一旦漂移，画出来的和点得到的就对不上。
+from core.slots import (
+    SLOTS,
+    RESERVED,
+    binding_kind,
+    conflict_reason,
+    hit_test,
+    FRAME_RATIO,
+    _DIR_ANGLE,
+    _WEDGE_INNER,
+    _WEDGE_OUTER,
+    _WEDGE_SPAN,
+)
 
 
 class GamepadCanvas(QWidget):
-    """自定义绘制手柄状态"""
+    """自定义绘制手柄状态；同时是绑定的编辑面 —— 点哪个键就绑哪个"""
+
+    slot_clicked = pyqtSignal(int)       # 可绑定的槽位被点击
+    slot_refused = pyqtSignal(int)       # 保留槽位被点击，附带说明
 
     def __init__(self, parent=None):
         super().__init__(parent)
+        self._hover: int | None = None
+        self._bindings: dict = {}
+        self.setMouseTracking(True)
         self._pressed: List[bool] = [False] * len(SLOTS)
         self._left_stick = (0.0, 0.0)
         self._right_stick = (0.0, 0.0)
         self._lt = 0.0
         self._rt = 0.0
-        self.setMinimumSize(360, 320)
+        self._dimmed = False
+        self.setMinimumSize(420, 300)
 
     def update_state(self, result: PollResult):
         self._pressed = list(result.pressed)
@@ -33,108 +60,398 @@ class GamepadCanvas(QWidget):
         self._rt = result.rt_value
         self.update()
 
+    def set_bindings(self, mappings: dict):
+        """当前方案的绑定，用来在图上标出哪些键已经绑了"""
+        if mappings != self._bindings:
+            self._bindings = dict(mappings)
+            self.update()
+
+    # ---------- 交互 ----------
+
+    def mouseMoveEvent(self, event):
+        pos = event.position()
+        hit = hit_test(pos.x(), pos.y(), self.width(), self.height())
+        if hit != self._hover:
+            self._hover = hit
+            self.setCursor(Qt.CursorShape.PointingHandCursor if hit is not None
+                           else Qt.CursorShape.ArrowCursor)
+            self.update()
+
+    def leaveEvent(self, _event):
+        if self._hover is not None:
+            self._hover = None
+            self.update()
+
+    def mousePressEvent(self, event):
+        if event.button() != Qt.MouseButton.LeftButton:
+            return
+        pos = event.position()
+        hit = hit_test(pos.x(), pos.y(), self.width(), self.height())
+        if hit is None:
+            return
+        if binding_kind(hit) == RESERVED:
+            self.slot_refused.emit(hit)
+        else:
+            self.slot_clicked.emit(hit)
+
+    def set_dimmed(self, dimmed: bool):
+        """未启动映射或闸门未对准时变暗 —— 一眼看出按了没用"""
+        if dimmed != self._dimmed:
+            self._dimmed = dimmed
+            self.update()
+
+    # ---------- 绘制 ----------
+
+    @staticmethod
+    def _glow(painter, cx, cy, r, color: QColor, strength=170):
+        """外扩辉光，近似 bloom —— Qt 没有廉价的模糊，用径向渐变代替"""
+        g = QRadialGradient(cx, cy, r)
+        c = QColor(color)
+        c.setAlpha(strength)
+        g.setColorAt(0.0, c)
+        mid = QColor(color); mid.setAlpha(int(strength * 0.35))
+        g.setColorAt(0.55, mid)
+        end = QColor(color); end.setAlpha(0)
+        g.setColorAt(1.0, end)
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(QBrush(g))
+        painter.drawEllipse(QPointF(cx, cy), r, r)
+
+    def _draw_grid(self, painter, w, h):
+        """背景细网格，衬科技感"""
+        step = w * 0.038
+        pen = QPen(QColor(255, 255, 255, 8), 1)
+        painter.setPen(pen)
+        x = 0.0
+        while x < w:
+            painter.drawLine(QPointF(x, 0), QPointF(x, h))
+            x += step
+        y = 0.0
+        while y < h:
+            painter.drawLine(QPointF(0, y), QPointF(w, y))
+            y += step
+
+    def _frame_rect(self):
+        """手柄画在一个固定宽高比的内接矩形里
+
+        否则 x 用宽度、y 用高度各自缩放，窗口一变形 ABXY 的菱形、
+        D-Pad 的十字、摇杆的扇形就全被拉扁。
+        """
+        w, h = self.width(), self.height()
+        # 留一点边距，否则握把会贴着画布底边被裁掉
+        aw, ah = w * 0.96, h * 0.96
+        ratio = FRAME_RATIO
+        if aw / ah > ratio:
+            fw = ah * ratio
+            fh = ah
+        else:
+            fw = aw
+            fh = aw / ratio
+        return (w - fw) / 2, (h - fh) / 2, fw, fh
+
     def paintEvent(self, _event):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-        w, h = self.width(), self.height()
+        painter.fillRect(self.rect(), QColor("#141426"))
+        self._draw_grid(painter, self.width(), self.height())
 
-        # 背景卡片
-        painter.fillRect(self.rect(), QColor(THEME["card"]))
+        ox, oy, fw, fh = self._frame_rect()
+        painter.translate(ox, oy)
 
-        # 手柄轮廓
-        pen = QPen(QColor(THEME["border"]), 2)
-        painter.setPen(pen)
-        painter.setBrush(QBrush(QColor(THEME["panel"])))
-        body = QRectF(w * 0.08, h * 0.18, w * 0.84, h * 0.62)
-        painter.drawRoundedRect(body, 40, 40)
-
-        # 左握把
-        painter.drawEllipse(QPointF(w * 0.14, h * 0.72), w * 0.10, h * 0.14)
-        # 右握把
-        painter.drawEllipse(QPointF(w * 0.86, h * 0.72), w * 0.10, h * 0.14)
-
-        # LT / RT 扳机条
-        self._draw_trigger(painter, w * 0.18, h * 0.12, w * 0.22, h * 0.06, self._lt, SLOTS[IDX_LT])
-        self._draw_trigger(painter, w * 0.60, h * 0.12, w * 0.22, h * 0.06, self._rt, SLOTS[IDX_RT])
-
-        # 摇杆
-        self._draw_stick(painter, w * 0.22, h * 0.58, w * 0.09, self._left_stick, "L")
-        self._draw_stick(painter, w * 0.72, h * 0.62, w * 0.09, self._right_stick, "R")
-
-        # 全部 24 个槽位由同一张表驱动
+        self._draw_body(painter, fw, fh)
         for slot in SLOTS:
-            px, py, pr = slot.panel
-            pressed = self._pressed[slot.index] if slot.index < len(self._pressed) else False
-            if slot.render == "button":
-                self._draw_button(
-                    painter, w * px, h * py, min(w, h) * pr,
-                    slot.color, slot.name.split()[-1], pressed,
-                )
-            elif pressed:  # dot：摇杆方向指示，按下才画
-                painter.setPen(Qt.PenStyle.NoPen)
-                painter.setBrush(QBrush(QColor(THEME["accent"])))
-                painter.drawEllipse(QPointF(w * px, h * py), 4, 4)
+            self._draw_slot(painter, slot, fw, fh)
+            self._draw_overlay(painter, slot, fw)
 
+        painter.resetTransform()
+        if self._dimmed:
+            painter.fillRect(self.rect(), QColor(15, 15, 26, 150))
         painter.end()
 
-    def _draw_button(self, painter, cx, cy, r, color_hex, label, pressed):
-        color = QColor(color_hex)
-        if pressed:
-            grad = QRadialGradient(cx, cy, r * 1.5)
-            grad.setColorAt(0, color.lighter(160))
-            grad.setColorAt(0.6, color)
-            grad.setColorAt(1, color.darker(130))
-            painter.setBrush(QBrush(grad))
-            painter.setPen(QPen(color.lighter(180), 2))
-        else:
-            painter.setBrush(QBrush(color.darker(150)))
-            painter.setPen(QPen(QColor(THEME["border"]), 1))
-        painter.drawEllipse(QPointF(cx, cy), r, r)
+    def _draw_body(self, painter, w, h):
+        """Xbox 手柄轮廓：中央机身 + 两侧下垂握把"""
+        # 全部按宽度缩放，与槽位坐标同一套基准
+        def P(x, y):
+            return w * x, w * y
 
-        if label:
-            painter.setPen(QPen(QColor(THEME["dark"] if pressed else THEME["subtext"])))
-            font = QFont("Segoe UI", max(9, int(r * 0.85)), QFont.Weight.Bold)
-            painter.setFont(font)
-            painter.drawText(QRectF(cx - r, cy - r, r * 2, r * 2),
-                             Qt.AlignmentFlag.AlignCenter, label)
+        def 圆(x, y, r):
+            p = QPainterPath()
+            p.addEllipse(QPointF(*P(x, y)), w * r, w * r)
+            return p
 
-    def _draw_stick(self, painter, cx, cy, r, stick_val, label):
-        painter.setPen(QPen(QColor(THEME["border"]), 2))
-        painter.setBrush(QBrush(QColor(THEME["dim"])))
-        painter.drawEllipse(QPointF(cx, cy), r, r)
+        def 胶囊(x1, y1, x2, y2, r):
+            """两端点之间的胶囊 —— 两个圆加中间的矩形"""
+            p = 圆(x1, y1, r).united(圆(x2, y2, r))
+            ax, ay = P(x1, y1)
+            bx, by = P(x2, y2)
+            dx, dy = bx - ax, by - ay
+            ln = max((dx * dx + dy * dy) ** 0.5, 1e-6)
+            nx, ny = -dy / ln * w * r, dx / ln * w * r
+            body = QPainterPath()
+            body.moveTo(ax + nx, ay + ny)
+            body.lineTo(bx + nx, by + ny)
+            body.lineTo(bx - nx, by - ny)
+            body.lineTo(ax - nx, ay - ny)
+            body.closeSubpath()
+            return p.united(body)
 
-        sx = cx + stick_val[0] * r * 0.7
-        sy = cy + stick_val[1] * r * 0.7
-        painter.setBrush(QBrush(QColor(THEME["accent"])))
+        # 轮廓 = 中央机身 ∪ 两侧护翼 ∪ 两条斜向握把
+        core = QPainterPath()
+        core.addRoundedRect(QRectF(*P(0.19, 0.145), w * 0.62, w * 0.245),
+                            w * 0.09, w * 0.09)
+        path = core
+        path = path.united(圆(0.275, 0.300, 0.182))     # 左护翼（罩住左摇杆与 D-Pad）
+        path = path.united(圆(0.700, 0.300, 0.182))     # 右护翼（罩住 ABXY 与右摇杆）
+        path = path.united(胶囊(0.222, 0.330, 0.150, 0.585, 0.098))   # 左握把
+        path = path.united(胶囊(0.752, 0.330, 0.824, 0.585, 0.098))   # 右握把
+        path = path.simplified()
+
+        grad = QLinearGradient(0, w * 0.08, 0, w * 0.70)
+        grad.setColorAt(0.0, QColor("#232342"))
+        grad.setColorAt(0.5, QColor("#1a1a30"))
+        grad.setColorAt(1.0, QColor("#111124"))
+        painter.setBrush(QBrush(grad))
         painter.setPen(Qt.PenStyle.NoPen)
-        painter.drawEllipse(QPointF(sx, sy), r * 0.35, r * 0.35)
+        painter.drawPath(path)
 
-        painter.setPen(QPen(QColor(THEME["subtext"])))
-        font = QFont("Segoe UI", 11, QFont.Weight.DemiBold)
-        painter.setFont(font)
-        painter.drawText(QRectF(cx - r, cy + r + 2, r * 2, 18),
+        # 边缘光：上沿青、下沿紫，做出体积与科技味
+        rim = QLinearGradient(0, w * 0.08, 0, w * 0.70)
+        rim.setColorAt(0.0, QColor(0, 240, 195, 255))
+        rim.setColorAt(0.42, QColor(120, 140, 210, 130))
+        rim.setColorAt(1.0, QColor(150, 110, 255, 235))
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        # 先描一道粗而透明的做外辉光，再描一道细而实的做硬边
+        halo = QLinearGradient(0, w * 0.08, 0, w * 0.70)
+        halo.setColorAt(0.0, QColor(0, 240, 195, 60))
+        halo.setColorAt(1.0, QColor(150, 110, 255, 55))
+        painter.setPen(QPen(QBrush(halo), max(4.0, w * 0.010)))
+        painter.drawPath(path)
+        painter.setPen(QPen(QBrush(rim), max(1.6, w * 0.0032)))
+        painter.drawPath(path)
+
+        # 中央凹面高光，让机身有体积
+        inner = QRadialGradient(w * 0.5, w * 0.30, w * 0.32)
+        inner.setColorAt(0.0, QColor(255, 255, 255, 16))
+        inner.setColorAt(1.0, QColor(255, 255, 255, 0))
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(QBrush(inner))
+        painter.drawPath(path)
+
+    def _draw_slot(self, painter, slot, w, h):
+        px, py, pr = slot.panel
+        # x / y / 半径全部按宽度缩放：圆才是圆，菱形与十字才不走形。
+        # 画框高度固定为宽度的 1/1.42，所以 py 的取值上限是 0.704。
+        cx, cy, r = w * px, w * py, w * pr
+        pressed = self._pressed[slot.index] if slot.index < len(self._pressed) else False
+        kind = slot.render
+
+        if kind == "button":
+            self._draw_round_button(painter, cx, cy, r, slot, pressed)
+        elif kind == "bumper":
+            self._draw_bumper(painter, cx, cy, r, slot, pressed)
+        elif kind == "trigger":
+            value = self._lt if slot.index == IDX_LT else self._rt
+            self._draw_trigger(painter, cx, cy, r, slot, value)
+        elif kind == "stick":
+            offset = self._left_stick if slot.index == 10 else self._right_stick
+            self._draw_stick(painter, cx, cy, r, slot, offset, pressed)
+        elif kind == "stick_dir":
+            self._draw_wedge(painter, cx, cy, r, slot, pressed)
+        elif kind == "dpad":
+            self._draw_dpad_petal(painter, cx, cy, r, slot, pressed)
+
+    def _draw_overlay(self, painter, slot, w):
+        """叠加层：已绑定的标记、悬停高亮、保留槽位的禁用叉"""
+        px, py, pr = slot.panel
+        cx, cy, r = w * px, w * py, w * pr
+        kind = binding_kind(slot.index)
+
+        # 各形状的半宽/半高不同：肩键是扁矩形，用 r 同时做横纵偏移会把标记甩到外面
+        hw, hh = {
+            "bumper": (r, r * 0.34),
+            "trigger": (r * 0.72, r * 0.62),
+            "dpad": (r * 0.92, r * 0.92),
+        }.get(slot.render, (r, r))
+
+        if kind == RESERVED:
+            # 保留槽位：斜杠，表示点了也绑不上
+            painter.setPen(QPen(QColor(255, 255, 255, 70), max(1.2, r * 0.10)))
+            painter.drawLine(QPointF(cx - hw * 0.5, cy + hh * 0.5),
+                             QPointF(cx + hw * 0.5, cy - hh * 0.5))
+        elif slot.index in self._bindings:
+            # 已绑定：右上角一个实心小点
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.setBrush(QBrush(QColor(THEME["accent"])))
+            painter.drawEllipse(QPointF(cx + hw * 0.82, cy - hh * 0.82),
+                                r * 0.20, r * 0.20)
+
+        if self._hover == slot.index:
+            painter.setBrush(Qt.BrushStyle.NoBrush)
+            hl = QColor("#ff5c5c") if kind == RESERVED else QColor(255, 255, 255, 235)
+            painter.setPen(QPen(hl, max(1.6, r * 0.12)))
+            pad = r * 0.22
+            painter.drawRoundedRect(
+                QRectF(cx - hw - pad, cy - hh - pad, (hw + pad) * 2, (hh + pad) * 2),
+                hh + pad, hh + pad)
+
+    def _draw_round_button(self, painter, cx, cy, r, slot, pressed):
+        color = QColor(slot.color)
+        if pressed:
+            self._glow(painter, cx, cy, r * 2.4, color, 150)
+            grad = QRadialGradient(cx, cy - r * 0.3, r * 1.5)
+            grad.setColorAt(0.0, color.lighter(190))
+            grad.setColorAt(0.6, color)
+            grad.setColorAt(1.0, color.darker(120))
+            painter.setBrush(QBrush(grad))
+            painter.setPen(QPen(QColor(255, 255, 255, 220), max(1.5, r * 0.10)))
+        else:
+            # 霓虹描边：暗玻璃底 + 细亮环，而不是实心暗块
+            painter.setBrush(QBrush(QColor(12, 12, 26, 210)))
+            ring = QColor(color); ring.setAlpha(215)
+            painter.setPen(QPen(ring, max(1.2, r * 0.11)))
+        painter.drawEllipse(QPointF(cx, cy), r, r)
+        if not pressed:      # 内层细环，小键在霓虹风里才不寡淡
+            painter.setBrush(Qt.BrushStyle.NoBrush)
+            faint = QColor(color); faint.setAlpha(70)
+            painter.setPen(QPen(faint, 1))
+            painter.drawEllipse(QPointF(cx, cy), r * 0.66, r * 0.66)
+
+        label = slot.name.split()[-1]
+        font_px = int(r * 0.95)
+        if font_px < 9:          # 放不下就不写，免得截断成「3ack」
+            return
+        painter.setPen(QPen(QColor("#0b0b18") if pressed else QColor(slot.color).lighter(125)))
+        painter.setFont(QFont("Segoe UI", font_px, QFont.Weight.Bold))
+        painter.drawText(QRectF(cx - r * 1.6, cy - r, r * 3.2, r * 2),
                          Qt.AlignmentFlag.AlignCenter, label)
 
-    def _draw_trigger(self, painter, x, y, w, h, value, slot):
-        painter.setPen(QPen(QColor(THEME["border"]), 1))
-        painter.setBrush(QBrush(QColor(THEME["dim"])))
-        painter.drawRoundedRect(QRectF(x, y, w, h), 4, 4)
+    def _draw_bumper(self, painter, cx, cy, r, slot, pressed):
+        color = QColor(slot.color)
+        rect = QRectF(cx - r, cy - r * 0.34, r * 2, r * 0.68)
+        if pressed:
+            self._glow(painter, cx, cy, r * 1.9, color, 140)
+            painter.setBrush(QBrush(color))
+            painter.setPen(QPen(QColor(255, 255, 255, 220), 2))
+        else:
+            painter.setBrush(QBrush(QColor(12, 12, 26, 210)))
+            ring = QColor(color); ring.setAlpha(195)
+            painter.setPen(QPen(ring, max(1.2, r * 0.055)))
+        painter.drawRoundedRect(rect, r * 0.34, r * 0.34)
+        painter.setPen(QPen(QColor("#0b0b18") if pressed else color.lighter(125)))
+        painter.setFont(QFont("Segoe UI", max(8, int(r * 0.36)), QFont.Weight.Bold))
+        painter.drawText(rect, Qt.AlignmentFlag.AlignCenter, slot.name)
 
-        fill_w = w * max(0.0, min(1.0, value))
-        if fill_w > 0:
-            grad_color = QColor(slot.color)
-            painter.setBrush(QBrush(grad_color))
+    def _draw_trigger(self, painter, cx, cy, r, slot, value):
+        color = QColor(slot.color)
+        rect = QRectF(cx - r * 0.72, cy - r * 0.62, r * 1.44, r * 1.24)
+        if value > 0.5:
+            self._glow(painter, cx, cy, r * 1.9, color, 130)
+        painter.setBrush(QBrush(QColor(12, 12, 26, 210)))
+        ring = QColor(color); ring.setAlpha(150)
+        painter.setPen(QPen(ring, max(1.1, r * 0.055)))
+        painter.drawRoundedRect(rect, r * 0.36, r * 0.36)
+
+        v = max(0.0, min(1.0, value))
+        if v > 0.01:
+            fill = QRectF(rect.left(), rect.bottom() - rect.height() * v,
+                          rect.width(), rect.height() * v)
+            painter.setBrush(QBrush(color if v > 0.5 else color.darker(125)))
             painter.setPen(Qt.PenStyle.NoPen)
-            painter.drawRoundedRect(QRectF(x, y, fill_w, h), 4, 4)
+            painter.drawRoundedRect(fill, r * 0.3, r * 0.3)
 
-        painter.setPen(QPen(QColor(THEME["subtext"])))
-        font = QFont("Segoe UI", 11, QFont.Weight.DemiBold)
-        painter.setFont(font)
-        painter.drawText(QRectF(x, y - 18, w, 16), Qt.AlignmentFlag.AlignCenter, slot.name)
+        painter.setPen(QPen(QColor("#0b0b18") if v > 0.5 else color.lighter(120)))
+        painter.setFont(QFont("Segoe UI", max(8, int(r * 0.40)), QFont.Weight.Bold))
+        painter.drawText(rect, Qt.AlignmentFlag.AlignCenter, slot.name)
+
+    def _draw_stick(self, painter, cx, cy, r, slot, offset, pressed):
+        # 底座：暗井 + 双层霓虹环
+        painter.setBrush(QBrush(QColor(9, 9, 20, 235)))
+        painter.setPen(QPen(QColor(0, 212, 170, 90), max(1.2, r * 0.055)))
+        painter.drawEllipse(QPointF(cx, cy), r, r)
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        painter.setPen(QPen(QColor(124, 92, 255, 70), 1))
+        painter.drawEllipse(QPointF(cx, cy), r * 0.82, r * 0.82)
+
+        # 摇杆帽随输入偏移
+        sx = cx + offset[0] * r * 0.30
+        sy = cy + offset[1] * r * 0.30
+        cap = r * 0.62
+        if pressed:
+            self._glow(painter, sx, sy, cap * 2.6, QColor(THEME["accent"]), 165)
+        grad = QRadialGradient(sx, sy - cap * 0.45, cap * 1.9)
+        if pressed:
+            grad.setColorAt(0.0, QColor(THEME["accent"]).lighter(165))
+            grad.setColorAt(1.0, QColor(THEME["accent"]).darker(160))
+        else:
+            grad.setColorAt(0.0, QColor("#3d3d63"))
+            grad.setColorAt(1.0, QColor("#191932"))
+        painter.setBrush(QBrush(grad))
+        painter.setPen(QPen(QColor(255, 255, 255, 210) if pressed
+                            else QColor(0, 212, 170, 120), max(1.2, cap * 0.10)))
+        painter.drawEllipse(QPointF(sx, sy), cap, cap)
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        painter.setPen(QPen(QColor(255, 255, 255, 40), 1))
+        painter.drawEllipse(QPointF(sx, sy), cap * 0.55, cap * 0.55)
+
+    def _draw_wedge(self, painter, cx, cy, r, slot, pressed):
+        """摇杆四周的方向热区，扇形"""
+        angle = _DIR_ANGLE[slot.name.split()[-1]]
+        outer = QRectF(cx - r * _WEDGE_OUTER, cy - r * _WEDGE_OUTER,
+                       r * _WEDGE_OUTER * 2, r * _WEDGE_OUTER * 2)
+        inner = QRectF(cx - r * _WEDGE_INNER, cy - r * _WEDGE_INNER,
+                       r * _WEDGE_INNER * 2, r * _WEDGE_INNER * 2)
+        path = QPainterPath()
+        path.arcMoveTo(outer, angle - _WEDGE_SPAN / 2)
+        path.arcTo(outer, angle - _WEDGE_SPAN / 2, _WEDGE_SPAN)
+        path.arcTo(inner, angle + _WEDGE_SPAN / 2, -_WEDGE_SPAN)
+        path.closeSubpath()
+
+        if pressed:
+            acc = QColor(THEME["accent"])
+            self._glow(painter, cx, cy, r * _WEDGE_OUTER * 1.35, acc, 110)
+            painter.setBrush(QBrush(acc))
+            painter.setPen(QPen(QColor(255, 255, 255, 200), 1))
+        else:
+            painter.setBrush(QBrush(QColor(0, 212, 170, 20)))
+            painter.setPen(QPen(QColor(0, 212, 170, 60), 1))
+        painter.drawPath(path)
+
+    def _draw_dpad_petal(self, painter, cx, cy, r, slot, pressed):
+        rect = QRectF(cx - r * 0.92, cy - r * 0.92, r * 1.84, r * 1.84)
+        color = QColor(slot.color)
+        if pressed:
+            self._glow(painter, cx, cy, r * 2.2, color, 150)
+            painter.setBrush(QBrush(color))
+            painter.setPen(QPen(QColor(255, 255, 255, 215), max(1.4, r * 0.10)))
+        else:
+            painter.setBrush(QBrush(QColor(12, 12, 26, 210)))
+            ring = QColor(color); ring.setAlpha(150)
+            painter.setPen(QPen(ring, max(1.1, r * 0.09)))
+        painter.drawRoundedRect(rect, r * 0.26, r * 0.26)
+
+        # 方向箭头
+        d = slot.name.split()[-1]
+        a = r * 0.34
+        tri = QPainterPath()
+        if d == "Up":
+            tri.moveTo(cx, cy - a); tri.lineTo(cx - a, cy + a * 0.7); tri.lineTo(cx + a, cy + a * 0.7)
+        elif d == "Down":
+            tri.moveTo(cx, cy + a); tri.lineTo(cx - a, cy - a * 0.7); tri.lineTo(cx + a, cy - a * 0.7)
+        elif d == "Left":
+            tri.moveTo(cx - a, cy); tri.lineTo(cx + a * 0.7, cy - a); tri.lineTo(cx + a * 0.7, cy + a)
+        else:
+            tri.moveTo(cx + a, cy); tri.lineTo(cx - a * 0.7, cy - a); tri.lineTo(cx - a * 0.7, cy + a)
+        tri.closeSubpath()
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(QBrush(QColor("#0b0b18") if pressed else color.lighter(115)))
+        painter.drawPath(tri)
 
 
 class GamepadPanel(QFrame):
     """手柄可视化面板容器"""
+
+    slot_clicked = pyqtSignal(int)
+    slot_refused = pyqtSignal(int)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -148,6 +465,8 @@ class GamepadPanel(QFrame):
         layout.addWidget(title)
 
         self._canvas = GamepadCanvas()
+        self._canvas.slot_clicked.connect(self.slot_clicked.emit)
+        self._canvas.slot_refused.connect(self.slot_refused.emit)
         layout.addWidget(self._canvas, stretch=1)
 
         self._info = QLabel("未连接")
@@ -155,8 +474,14 @@ class GamepadPanel(QFrame):
         self._info.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(self._info)
 
+    def set_bindings(self, mappings):
+        self._canvas.set_bindings(mappings)
+
     def update_state(self, result: PollResult):
         self._canvas.update_state(result)
+
+    def set_dimmed(self, dimmed: bool):
+        self._canvas.set_dimmed(dimmed)
 
     def set_info(self, text: str, connected: bool):
         self._info.setText(text)

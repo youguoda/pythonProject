@@ -48,11 +48,17 @@ Windows 专属：`core/mouse_output.py`、`core/window_focus.py`、`core/autosta
 
 ### 逻辑槽位索引是全局契约
 
-`core/constants.py` 的 `BUTTON_NAMES` 是一个 24 项列表，**它的下标就是整个系统里唯一的按键标识符**：profile JSON 的 `mappings` 键、`MappingTable` 的行号、`MappingEngine._mappings` 的键、`PollResult.pressed` 的下标，全都是同一套 0–23。
+`core/slots.py` 的 `SLOTS` 是一个 24 项元组，**它的下标就是整个系统里唯一的按键标识符**：profile JSON 的 `mappings` 键、`MappingTable` 的行号、`MappingEngine._mappings` 的键、`InputFrame.pressed` 的下标，全都是同一套 0–23。
 
-因此**往 `BUTTON_NAMES` 中间插入或重排任何一项，都会静默改写磁盘上所有 profile 的含义**。要加按键只能追加到末尾。
+因此**往 `SLOTS` 中间插入或重排任何一项，都会静默改写磁盘上所有 profile 的含义**。要加按键只能追加到末尾。
+
+每个 `Slot` 一条记录带齐名字、颜色、面板坐标和渲染形态。颜色从前以**名字**为键（`BTN_COLOR`），改一个按钮的名字颜色就静默丢失退回默认色；现在同处一条记录，不可能失联。面板坐标放在 `core/` 是有意的分层妥协 —— 拆去 `ui/` 就等于把一个槽位重新劈成两半。
+
+`render` 只有两种：`button`（带标签圆形，槽位 0–15）和 `dot`（摇杆方向小点，16–23）。LT/RT 的指示灯读 `pressed[6]/[7]`，与其余槽位一致 —— 从前它们单独读 `lt_value/rt_value > 0.5`，在轴数 <6 的手柄上会导致指示灯永不点亮。
 
 注意 20–23 的顺序是 `Right Stick Up / Down / Right / Left`——右摇杆的左右和左摇杆（18=Left, 19=Right）是反的，这是有意的，`joystick_manager.poll()` 与之对应。
+
+`poll()` 里从 hat/axis 到槽位的赋值**仍是硬编码的过程式代码**，不由 `SLOTS` 驱动。加一个槽位需要改两处：`SLOTS` 追加一条，`poll()` 里加读取代码。
 
 ### 硬件 → 逻辑的转换层
 

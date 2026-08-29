@@ -145,7 +145,7 @@ class KeyBindDialog(QDialog):
         title.setObjectName("dialogTitle")
         layout.addWidget(title)
 
-        btn_name = BUTTON_NAMES[self._button_index]
+        btn_name = SLOTS[self._button_index].name
         hint = QLabel(
             f"为「{btn_name}」绑定键盘键\n"
             "支持组合键，如 Left Ctrl+C、Win+Tab\n"

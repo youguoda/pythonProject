@@ -3,7 +3,7 @@
 
 from typing import List, Optional
 
-# 逻辑槽位索引（与 BUTTON_NAMES 一致）
+# 逻辑槽位索引（与 slots.SLOTS 的下标一致）
 IDX_LT = 6
 IDX_RT = 7
 IDX_BACK = 8

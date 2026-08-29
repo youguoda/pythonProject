@@ -30,28 +30,6 @@ SCROLL_SENSITIVITY_MIN = 0.1
 SCROLL_SENSITIVITY_MAX = 2.0
 LT_LONG_PRESS_SEC = 0.4
 
-BUTTON_NAMES = [
-    "A", "B", "X", "Y",
-    "LB", "RB", "LT", "RT",
-    "Back", "Start", "L3", "R3",
-    "D-Pad Up", "D-Pad Down", "D-Pad Left", "D-Pad Right",
-    "Left Stick Up", "Left Stick Down", "Left Stick Left", "Left Stick Right",
-    "Right Stick Up", "Right Stick Down", "Right Stick Right", "Right Stick Left",
-]
-
-BTN_COLOR = {
-    "A": "#4ecca3", "B": "#e94560", "X": "#4a9eff", "Y": "#ffc107",
-    "LB": "#a78bfa", "RB": "#a78bfa", "LT": "#f97316", "RT": "#f97316",
-    "Back": "#94a3b8", "Start": "#94a3b8", "L3": "#64748b", "R3": "#64748b",
-    "D-Pad Up": "#38bdf8", "D-Pad Down": "#38bdf8",
-    "D-Pad Left": "#38bdf8", "D-Pad Right": "#38bdf8",
-    "Left Stick Up": "#64748b", "Left Stick Down": "#64748b",
-    "Left Stick Left": "#64748b", "Left Stick Right": "#64748b",
-    "Right Stick Up": "#64748b", "Right Stick Down": "#64748b",
-    "Right Stick Right": "#64748b", "Right Stick Left": "#64748b",
-}
-DEFAULT_BTN_COLOR = "#4a9eff"
-
 THEME = {
     "bg": "#0f0f1a",
     "panel": "#1a1a2e",

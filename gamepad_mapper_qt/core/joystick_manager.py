@@ -8,14 +8,15 @@ from typing import List, Optional, Tuple
 import pygame
 
 from core.button_map import apply_hardware_buttons, detect_layout
-from core.constants import BUTTON_NAMES, DEFAULT_THRESHOLD
+from core.constants import DEFAULT_THRESHOLD
+from core.slots import SLOTS
 
 
 @dataclass
 class PollResult:
     """一次轮询结果"""
 
-    pressed: List[bool] = field(default_factory=lambda: [False] * len(BUTTON_NAMES))
+    pressed: List[bool] = field(default_factory=lambda: [False] * len(SLOTS))
     left_stick: Tuple[float, float] = (0.0, 0.0)
     right_stick: Tuple[float, float] = (0.0, 0.0)
     lt_value: float = 0.0

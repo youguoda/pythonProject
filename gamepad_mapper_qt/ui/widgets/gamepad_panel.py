@@ -7,27 +7,10 @@ from PyQt6.QtCore import Qt, QRectF, QPointF
 from PyQt6.QtGui import QPainter, QColor, QPen, QBrush, QRadialGradient, QFont
 from PyQt6.QtWidgets import QWidget, QVBoxLayout, QLabel, QFrame
 
-from core.constants import BUTTON_NAMES, BTN_COLOR, DEFAULT_BTN_COLOR, THEME
+from core.constants import THEME
 from core.joystick_manager import PollResult
-
-
-# 按钮在面板上的布局位置 (x%, y%, radius%)
-_BUTTON_LAYOUT = {
-    0: (0.62, 0.55, 0.055),   # A
-    1: (0.72, 0.45, 0.055),   # B
-    2: (0.52, 0.45, 0.055),   # X
-    3: (0.62, 0.35, 0.055),   # Y
-    4: (0.18, 0.28, 0.045),   # LB
-    5: (0.82, 0.28, 0.045),   # RB
-    8: (0.38, 0.38, 0.035),   # Back
-    9: (0.50, 0.38, 0.035),   # Start
-    10: (0.22, 0.58, 0.030),  # L3
-    11: (0.72, 0.62, 0.030),  # R3
-    12: (0.50, 0.72, 0.030),  # D-Up
-    13: (0.50, 0.88, 0.030),  # D-Down
-    14: (0.38, 0.80, 0.030),  # D-Left
-    15: (0.62, 0.80, 0.030),  # D-Right
-}
+from core.button_map import IDX_LT, IDX_RT
+from core.slots import SLOTS
 
 
 class GamepadCanvas(QWidget):
@@ -35,7 +18,7 @@ class GamepadCanvas(QWidget):
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self._pressed: List[bool] = [False] * len(BUTTON_NAMES)
+        self._pressed: List[bool] = [False] * len(SLOTS)
         self._left_stick = (0.0, 0.0)
         self._right_stick = (0.0, 0.0)
         self._lt = 0.0
@@ -71,39 +54,23 @@ class GamepadCanvas(QWidget):
         painter.drawEllipse(QPointF(w * 0.86, h * 0.72), w * 0.10, h * 0.14)
 
         # LT / RT 扳机条
-        self._draw_trigger(painter, w * 0.18, h * 0.12, w * 0.22, h * 0.06, self._lt, "LT")
-        self._draw_trigger(painter, w * 0.60, h * 0.12, w * 0.22, h * 0.06, self._rt, "RT")
+        self._draw_trigger(painter, w * 0.18, h * 0.12, w * 0.22, h * 0.06, self._lt, SLOTS[IDX_LT])
+        self._draw_trigger(painter, w * 0.60, h * 0.12, w * 0.22, h * 0.06, self._rt, SLOTS[IDX_RT])
 
         # 摇杆
         self._draw_stick(painter, w * 0.22, h * 0.58, w * 0.09, self._left_stick, "L")
         self._draw_stick(painter, w * 0.72, h * 0.62, w * 0.09, self._right_stick, "R")
 
-        # 按钮
-        for bi, (px, py, pr) in _BUTTON_LAYOUT.items():
-            cx, cy, r = w * px, h * py, min(w, h) * pr
-            name = BUTTON_NAMES[bi]
-            color = BTN_COLOR.get(name, DEFAULT_BTN_COLOR)
-            pressed = self._pressed[bi] if bi < len(self._pressed) else False
-            self._draw_button(painter, cx, cy, r, color, name.split()[-1], pressed)
-
-        # LT/RT 数字键指示
-        for bi in (6, 7):
-            val = self._lt if bi == 6 else self._rt
-            px, py = (0.28, 0.22) if bi == 6 else (0.72, 0.22)
-            pressed = val > 0.5
-            name = BUTTON_NAMES[bi]
-            color = BTN_COLOR.get(name, DEFAULT_BTN_COLOR)
-            self._draw_button(painter, w * px, h * py, min(w, h) * 0.04, color, name, pressed)
-
-        # 摇杆方向指示
-        stick_dirs = {
-            16: (0.22, 0.48), 17: (0.22, 0.68),
-            18: (0.12, 0.58), 19: (0.32, 0.58),
-            20: (0.72, 0.52), 21: (0.72, 0.72),
-            22: (0.82, 0.62), 23: (0.62, 0.62),
-        }
-        for bi, (px, py) in stick_dirs.items():
-            if self._pressed[bi]:
+        # 全部 24 个槽位由同一张表驱动
+        for 槽 in SLOTS:
+            px, py, pr = 槽.panel
+            pressed = self._pressed[槽.index] if 槽.index < len(self._pressed) else False
+            if 槽.render == "button":
+                self._draw_button(
+                    painter, w * px, h * py, min(w, h) * pr,
+                    槽.color, 槽.name.split()[-1], pressed,
+                )
+            elif pressed:  # dot：摇杆方向指示，按下才画
                 painter.setPen(Qt.PenStyle.NoPen)
                 painter.setBrush(QBrush(QColor(THEME["accent"])))
                 painter.drawEllipse(QPointF(w * px, h * py), 4, 4)
@@ -148,14 +115,14 @@ class GamepadCanvas(QWidget):
         painter.drawText(QRectF(cx - r, cy + r + 2, r * 2, 18),
                          Qt.AlignmentFlag.AlignCenter, label)
 
-    def _draw_trigger(self, painter, x, y, w, h, value, label):
+    def _draw_trigger(self, painter, x, y, w, h, value, 槽):
         painter.setPen(QPen(QColor(THEME["border"]), 1))
         painter.setBrush(QBrush(QColor(THEME["dim"])))
         painter.drawRoundedRect(QRectF(x, y, w, h), 4, 4)
 
         fill_w = w * max(0.0, min(1.0, value))
         if fill_w > 0:
-            grad_color = QColor(BTN_COLOR.get(label, DEFAULT_BTN_COLOR))
+            grad_color = QColor(槽.color)
             painter.setBrush(QBrush(grad_color))
             painter.setPen(Qt.PenStyle.NoPen)
             painter.drawRoundedRect(QRectF(x, y, fill_w, h), 4, 4)
@@ -163,7 +130,7 @@ class GamepadCanvas(QWidget):
         painter.setPen(QPen(QColor(THEME["subtext"])))
         font = QFont("Segoe UI", 11, QFont.Weight.DemiBold)
         painter.setFont(font)
-        painter.drawText(QRectF(x, y - 18, w, 16), Qt.AlignmentFlag.AlignCenter, label)
+        painter.drawText(QRectF(x, y - 18, w, 16), Qt.AlignmentFlag.AlignCenter, 槽.name)
 
 
 class GamepadPanel(QFrame):

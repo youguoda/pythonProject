@@ -4,9 +4,11 @@
 
 ## 槽位 (slot)
 
-一个 0–23 的整数，标识手柄上的一个可映射输入。`constants.BUTTON_NAMES` 的下标就是槽位号，**它是贯穿磁盘、UI、引擎的唯一标识符** —— profile JSON 的键、`MappingTable` 的行号、`InputFrame.pressed` 的下标全是它。
+一个 0–23 的整数，标识手柄上的一个可映射输入。`slots.SLOTS` 的下标就是槽位号，**它是贯穿磁盘、UI、引擎的唯一标识符** —— profile JSON 的键、`MappingTable` 的行号、`InputFrame.pressed` 的下标全是它。
 
-往 `BUTTON_NAMES` 中间插入或重排会静默改写磁盘上所有 profile 的含义。只能追加到末尾。
+一个槽位的全部静态属性（名字、颜色、面板坐标、渲染形态）由一条 `Slot` 记录带齐，不再散在多张表里。
+
+往 `SLOTS` 中间插入或重排会静默改写磁盘上所有 profile 的含义。只能追加到末尾。
 
 - 回避：「按钮」（槽位包含 D-Pad 方向和摇杆方向，它们不是按钮）、「按键」（那是键盘侧的说法）
 

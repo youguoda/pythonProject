@@ -10,7 +10,8 @@ from PyQt6.QtWidgets import (
     QHBoxLayout, QHeaderView, QAbstractItemView,
 )
 
-from core.constants import BUTTON_NAMES, BTN_COLOR, DEFAULT_BTN_COLOR, THEME
+from core.constants import THEME
+from core.slots import SLOTS
 
 _ROW_HEIGHT = 40
 _BTN_HEIGHT = 28
@@ -30,7 +31,7 @@ class MappingTable(QTableWidget):
 
     def _setup_table(self):
         self.setColumnCount(3)
-        self.setRowCount(len(BUTTON_NAMES))
+        self.setRowCount(len(SLOTS))
         self.setHorizontalHeaderLabels(["手柄键", "键盘键", "操作"])
         self.verticalHeader().setVisible(False)
         self.setAlternatingRowColors(True)
@@ -48,8 +49,8 @@ class MappingTable(QTableWidget):
         row_font = QFont("Segoe UI", 14)
         row_font.setWeight(QFont.Weight.DemiBold)
 
-        for row, name in enumerate(BUTTON_NAMES):
-            color = BTN_COLOR.get(name, DEFAULT_BTN_COLOR)
+        for row, 槽 in enumerate(SLOTS):
+            name, color = 槽.name, 槽.color
             dot_name = f"● {name}"
             name_item = QTableWidgetItem(dot_name)
             name_item.setFlags(Qt.ItemFlag.ItemIsEnabled)
@@ -109,7 +110,7 @@ class MappingTable(QTableWidget):
 
     def load_mappings(self, mappings: Dict[int, str]):
         self._mappings = dict(mappings)
-        for row in range(len(BUTTON_NAMES)):
+        for row in range(len(SLOTS)):
             key = self._mappings.get(row, "-")
             item = self.item(row, 1)
             if item:
@@ -142,7 +143,7 @@ class MappingTable(QTableWidget):
 
     def clear_all(self):
         self._mappings.clear()
-        for row in range(len(BUTTON_NAMES)):
+        for row in range(len(SLOTS)):
             item = self.item(row, 1)
             if item:
                 item.setText("-")

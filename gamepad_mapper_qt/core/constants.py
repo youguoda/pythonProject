@@ -4,7 +4,6 @@
 APP_NAME = "Gamepad Vibe Controller"
 APP_VERSION = "2.0.0"
 CONFIG_DIR = "config"
-CONFIG_FILE = "mapping.json"
 
 PROFILE_ORDER = [
     "cursor", "claude_code", "codex", "zcode", "dsh",
@@ -38,20 +37,6 @@ BUTTON_NAMES = [
     "D-Pad Up", "D-Pad Down", "D-Pad Left", "D-Pad Right",
     "Left Stick Up", "Left Stick Down", "Left Stick Left", "Left Stick Right",
     "Right Stick Up", "Right Stick Down", "Right Stick Right", "Right Stick Left",
-]
-
-KEYBOARD_KEYS = [
-    "a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k", "l", "m",
-    "n", "o", "p", "q", "r", "s", "t", "u", "v", "w", "x", "y", "z",
-    "0", "1", "2", "3", "4", "5", "6", "7", "8", "9",
-    "space", "enter", "tab", "backspace", "delete",
-    "pageup", "pagedown",
-    "left", "right", "up", "down",
-    "f1", "f2", "f3", "f4", "f5", "f6", "f7", "f8", "f9", "f10", "f11", "f12",
-    "shift", "ctrl", "alt",
-    "cmd", "win", "super", "cmd_l", "cmd_r",
-    "ctrl_l", "ctrl_r", "shift_l", "shift_r", "alt_l", "alt_r",
-    "[", "]", "(", ")", "{", "}", ";", "'", ",", ".", "/", "\\", "-", "=", "`",
 ]
 
 BTN_COLOR = {

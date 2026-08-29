@@ -193,7 +193,5 @@ class GamepadPanel(QFrame):
 
     def set_info(self, text: str, connected: bool):
         self._info.setText(text)
-        if connected:
-            self._info.setStyleSheet("color: #00d4aa; font-size: 15px; font-weight: 600;")
-        else:
-            self._info.setStyleSheet("color: #ffb84d; font-size: 15px; font-weight: 600;")
+        色 = THEME["accent"] if connected else THEME["warn"]
+        self._info.setStyleSheet(f"color: {色}; font-size: 15px; font-weight: 600;")

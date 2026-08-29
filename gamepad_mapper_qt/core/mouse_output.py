@@ -23,19 +23,11 @@ class MouseOutput:
         if final_dx or final_dy:
             self._user32.mouse_event(MOUSE_MOVE, final_dx, final_dy, 0, 0)
 
-    def left_click(self) -> None:
-        self._user32.mouse_event(MOUSE_LEFT_DOWN, 0, 0, 0, 0)
-        self._user32.mouse_event(MOUSE_LEFT_UP, 0, 0, 0, 0)
-
     def left_down(self) -> None:
         self._user32.mouse_event(MOUSE_LEFT_DOWN, 0, 0, 0, 0)
 
     def left_up(self) -> None:
         self._user32.mouse_event(MOUSE_LEFT_UP, 0, 0, 0, 0)
-
-    def right_click(self) -> None:
-        self._user32.mouse_event(MOUSE_RIGHT_DOWN, 0, 0, 0, 0)
-        self._user32.mouse_event(MOUSE_RIGHT_UP, 0, 0, 0, 0)
 
     def right_down(self) -> None:
         self._user32.mouse_event(MOUSE_RIGHT_DOWN, 0, 0, 0, 0)

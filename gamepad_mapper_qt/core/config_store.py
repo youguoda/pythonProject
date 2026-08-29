@@ -189,25 +189,3 @@ def save_active_profile_id(profile_id: str) -> None:
     save_app_state(state)
 
 
-def load_config() -> tuple[Dict[int, str], float]:
-    """兼容旧接口：加载当前 active profile（含统一鼠标层）"""
-    profile_id = load_active_profile_id()
-    profile = load_profile(profile_id)
-    if profile:
-        return effective_mappings(profile), profile.threshold
-    return {}, DEFAULT_THRESHOLD
-
-
-def save_config(mappings: Dict[int, str], threshold: float) -> None:
-    """兼容旧接口：保存到当前 active profile"""
-    profile_id = load_active_profile_id()
-    profile = load_profile(profile_id)
-    if not profile:
-        profile = HarnessProfile(
-            id=profile_id,
-            display_name=profile_id,
-            process_names=[],
-        )
-    profile.mappings = dict(mappings)
-    profile.threshold = threshold
-    save_profile(profile)

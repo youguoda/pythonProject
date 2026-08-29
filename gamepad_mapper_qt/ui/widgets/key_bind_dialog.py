@@ -7,6 +7,8 @@ from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtGui import QKeyEvent
 from PyQt6.QtWidgets import QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton
 
+from core.slots import SLOTS
+
 # 系统级快捷键：绑定对话框里无法可靠捕获，用预设写入
 _KEY_PRESETS = (
     ("任务视图 (Win+Tab)", "cmd+tab"),

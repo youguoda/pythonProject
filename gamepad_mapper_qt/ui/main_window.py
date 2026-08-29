@@ -198,9 +198,9 @@ class MainWindow(QMainWindow):
         self._mapping_table = MappingTable()
         right_col.addWidget(self._mapping_table, stretch=1)
 
-        hint = QLabel(
-            "LT 短按聚焦 · LT 长按切方案 · RT 按住语音 · Start 启停映射"
-        )
+        # 保留槽位的用途不再写死在这里 —— 点图上对应的键，状态栏会说明，
+        # 而且说得更准（同一事实两处表达迟早会漂移）。
+        hint = QLabel("点手柄图上的按键即可绑定")
         hint.setObjectName("hintLabel")
         hint.setWordWrap(True)
         right_col.addWidget(hint)

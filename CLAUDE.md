@@ -174,7 +174,21 @@ UI 侧全部经由 `MainWindow._安全保存()` 这一个漏斗接住 `ConfigNot
 
 ## UI 层
 
-`ui/main_window.py`（529 行）是全部胶水：持有 joystick / keyboard / mouse / engine 四个对象，widget 只通过 pyqtSignal 往上报，不直接碰 core。样式集中在 `ui/styles/theme.qss`，配色常量在 `constants.THEME`，两边需要手动保持一致。界面文案与注释统一用中文。
+`ui/main_window.py` 是全部胶水：持有 joystick / input / keyboard / mouse / engine，widget 只通过 pyqtSignal 往上报，不直接碰 core。样式集中在 `ui/styles/theme.qss`，配色常量在 `constants.THEME`，两边需要手动保持一致。界面文案与注释用中文，**标识符用英文**。
+
+### 手柄图是绑定的编辑面
+
+`GamepadCanvas` 不只是状态显示，**点它上面的键就是绑定入口**：`mousePressEvent` → `slots.hit_test()` → 按 `binding_kind()` 分流（可绑弹对话框 / 冲突先提示再弹 / 保留只说明）。`GamepadPanel` 只做信号转发，不参与命中 —— 它的坐标系是容器的，拿去做 hit_test 会全错（这个错误犯过一次）。
+
+图按 Xbox 真实布局绘制，轮廓是**基本图形求并集**（中央圆角矩形 ∪ 两个护翼圆 ∪ 两条胶囊握把），不是手调贝塞尔 —— 后者每个控制点都要靠眼睛，改起来没有着力点。
+
+**x、y、半径一律按画框宽度缩放**，画框是固定 1.42:1 的居中内接矩形。曾经 x 用宽度、y 用高度各自缩放，窗口一变形 ABXY 的菱形、D-Pad 的十字、摇杆的扇形就全被拉扁。
+
+右侧列表是「已绑定」视图，默认只列真正绑了的（约 12 行），不是固定 24 行。
+
+### 拿真实 config 跑冒烟测试会改写你的方案
+
+`ActiveProfile` 任何变更立即落盘，所以构造 `MainWindow` 的探针脚本必须先 `monkeypatch` 掉 `config_store._profiles_dir` 和 `_app_state_path` 到临时目录。**已经因此丢过一次真实数据**（`general.json` 里的一条映射被删）。
 
 ## Agent skills
 

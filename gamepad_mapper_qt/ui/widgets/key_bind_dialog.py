@@ -5,17 +5,13 @@ import sys
 
 from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtGui import QKeyEvent
-from PyQt6.QtWidgets import QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton
-
-from core.slots import SLOTS
-
-# 系统级快捷键：绑定对话框里无法可靠捕获，用预设写入
-_KEY_PRESETS = (
-    ("任务视图 (Win+Tab)", "cmd+tab"),
-    ("显示桌面 (Win+D)", "cmd+d"),
-    ("资源管理器 (Win+E)", "cmd+e"),
+from PyQt6.QtWidgets import (
+    QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
+    QTreeWidget, QTreeWidgetItem, QLineEdit,
 )
 
+from core.slots import SLOTS
+from ui.widgets.key_catalog import CATALOG, MOUSE_ACTIONS
 
 # Qt key → pynput-style name
 _QT_KEY_MAP = {
@@ -132,11 +128,22 @@ class KeyBindDialog(QDialog):
         self._button_index = button_index
         self._captured_key: str | None = None
         self._pending_modifier: str | None = None
+        self._capturing = False
         self._setup_ui()
+
+    def _set_capturing(self, on: bool) -> None:
+        """进入捕获模式时把焦点从搜索框/树上收回来"""
+        self._capturing = on
+        if on:
+            self._tree.clearSelection()
+            self.setFocus()
+            self._key_label.setText("按下你想绑定的键…")
+        else:
+            self._key_label.setText("未选择")
 
     def _setup_ui(self):
         self.setWindowTitle("绑定键盘键")
-        self.setFixedSize(560, 420)
+        self.setFixedSize(640, 760)
         self.setModal(True)
 
         layout = QVBoxLayout(self)
@@ -149,26 +156,38 @@ class KeyBindDialog(QDialog):
 
         btn_name = SLOTS[self._button_index].name
         hint = QLabel(
-            f"为「{btn_name}」绑定键盘键\n"
-            "支持组合键，如 Left Ctrl+C、Win+Tab\n"
-            "Win+Tab 等系统快捷键请用下方预设（Windows 会拦截实时捕获）\n"
-            "（Esc 取消；单独绑定修饰键时，按下后松开即可）"
+            f"为「{btn_name}」选择动作\n"
+            "从列表里挑，或用「直接按键捕获」按下实际按键（支持组合键）\n"
+            "Win+Tab 等系统快捷键 Windows 会拦截实时捕获，请从列表选\n"
+            "（Esc 取消）"
         )
         hint.setObjectName("dialogHint")
         hint.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(hint)
 
-        preset_row = QHBoxLayout()
-        preset_row.setSpacing(8)
-        for label, combo in _KEY_PRESETS:
-            btn = QPushButton(label)
-            btn.setObjectName("refreshBtn")
-            btn.setCursor(Qt.CursorShape.PointingHandCursor)
-            btn.clicked.connect(lambda _, c=combo: self._apply_preset(c))
-            preset_row.addWidget(btn)
-        layout.addLayout(preset_row)
+        self._search = QLineEdit()
+        self._search.setPlaceholderText("搜索动作，如 复制 / ctrl / F5 / 滚轮")
+        self._search.setObjectName("searchBox")
+        self._search.textChanged.connect(self._filter_tree)
+        layout.addWidget(self._search)
 
-        self._key_label = QLabel("等待按键…")
+        self._tree = QTreeWidget()
+        self._tree.setObjectName("catalogTree")
+        self._tree.setHeaderHidden(True)
+        self._tree.setMinimumHeight(240)
+        self._build_tree()
+        self._tree.itemSelectionChanged.connect(self._on_tree_selection)
+        layout.addWidget(self._tree, stretch=1)
+
+        # 实时捕获与浏览列表必须显式切换：两者都要键盘焦点，同时开着会打架
+        self._capture_btn = QPushButton("⌨  直接按键捕获")
+        self._capture_btn.setObjectName("refreshBtn")
+        self._capture_btn.setCheckable(True)
+        self._capture_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._capture_btn.toggled.connect(self._set_capturing)
+        layout.addWidget(self._capture_btn)
+
+        self._key_label = QLabel("未选择")
         self._key_label.setObjectName("keyDisplay")
         self._key_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(self._key_label, alignment=Qt.AlignmentFlag.AlignCenter)
@@ -190,14 +209,60 @@ class KeyBindDialog(QDialog):
 
         layout.addLayout(btn_row)
 
+    def _build_tree(self) -> None:
+        for 分类, 项 in CATALOG:
+            父 = QTreeWidgetItem(self._tree, [分类])
+            父.setFlags(Qt.ItemFlag.ItemIsEnabled)      # 分类本身不可选中
+            for 显示名, 值 in 项:
+                子 = QTreeWidgetItem(父, [显示名])
+                子.setData(0, Qt.ItemDataRole.UserRole, 值)
+        self._tree.expandItem(self._tree.topLevelItem(0))
+
+    def _filter_tree(self, 关键词: str) -> None:
+        词 = 关键词.strip().lower()
+        for i in range(self._tree.topLevelItemCount()):
+            父 = self._tree.topLevelItem(i)
+            命中数 = 0
+            for j in range(父.childCount()):
+                子 = 父.child(j)
+                值 = 子.data(0, Qt.ItemDataRole.UserRole) or ""
+                命中 = not 词 or 词 in 子.text(0).lower() or 词 in 值.lower()
+                子.setHidden(not 命中)
+                命中数 += int(命中)
+            父.setHidden(命中数 == 0)
+            if 词:
+                父.setExpanded(命中数 > 0)
+
+    def _on_tree_selection(self) -> None:
+        项 = self._tree.selectedItems()
+        if not 项:
+            return
+        值 = 项[0].data(0, Qt.ItemDataRole.UserRole)
+        if 值:
+            self._apply_preset(值)
+
+    def _display_for(self, 值: str) -> str:
+        """哨兵动作显示中文名 —— 别把 @mouse:left 摆给用户看"""
+        if 值 in MOUSE_ACTIONS:
+            for _, 项 in CATALOG:
+                for 显示名, v in 项:
+                    if v == 值:
+                        return 显示名
+        return self._format_display(值)
+
     def _apply_preset(self, combo: str) -> None:
         self._captured_key = combo
-        self._key_label.setText(self._format_display(combo))
+        self._key_label.setText(self._display_for(combo))
         self._confirm_btn.setEnabled(True)
 
     def keyPressEvent(self, event: QKeyEvent):
         if event.key() == Qt.Key.Key_Escape:
             self.reject()
+            return
+
+        # 未进入捕获模式时不抢键盘 —— 否则在搜索框里打字会被当成要绑的键
+        if not self._capturing:
+            super().keyPressEvent(event)
             return
 
         if event.key() in _MODIFIER_KEYS:
@@ -218,6 +283,9 @@ class KeyBindDialog(QDialog):
             self._confirm_btn.setEnabled(True)
 
     def keyReleaseEvent(self, event: QKeyEvent):
+        if not self._capturing:
+            super().keyReleaseEvent(event)
+            return
         if self._captured_key:
             return
 

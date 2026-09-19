@@ -66,3 +66,20 @@ def test_松开失败后不再认为该键仍被按住():
         kb.release("a")
 
     assert "a" not in kb.pressed_keys, "失败的键不该永远留在已按下集合里"
+
+
+def test_escape_能解析成_pynput_的_esc():
+    """profile 里写的是 escape，而 pynput 叫 Key.esc
+
+    6 个方案的 B / X 键都绑了 escape，一直发不出去（press 会抛 ValueError），
+    候选 3 之前还是静默吞掉的。
+    """
+    from pynput.keyboard import Key
+    assert KeyboardOutput._resolve_key("escape") is Key.esc
+
+
+def test_别名表覆盖的写法都能解析成_Key():
+    from pynput.keyboard import Key
+    for 写法 in ["escape", "esc", "pageup", "pagedown", "win", "super", "windows"]:
+        解析 = KeyboardOutput._resolve_key(写法)
+        assert isinstance(解析, Key), f"{写法!r} 没解析成 Key，实际 {解析!r}"

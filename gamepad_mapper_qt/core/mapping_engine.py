@@ -8,8 +8,11 @@ from PyQt6.QtCore import QObject, pyqtSignal
 from core.button_map import IDX_LT, IDX_RT
 from core.constants import (
     MOUSE_LEFT,
+    MOUSE_MIDDLE,
     MOUSE_RIGHT,
     VOICE_KEY,
+    WHEEL_DOWN,
+    WHEEL_UP,
 )
 from core.gamepad_input import InputFrame
 from core.keyboard_output import KeyboardOutput
@@ -166,6 +169,12 @@ class MappingEngine(QObject):
             self._mouse.left_down()
         elif action == MOUSE_RIGHT:
             self._mouse.right_down()
+        elif action == MOUSE_MIDDLE:
+            self._mouse.middle_down()
+        elif action == WHEEL_UP:
+            self._mouse.wheel(1.0)      # 滚轮没有「按住」，按下滚一格
+        elif action == WHEEL_DOWN:
+            self._mouse.wheel(-1.0)
         else:
             self._keyboard.press(action)
 
@@ -179,6 +188,10 @@ class MappingEngine(QObject):
             self._mouse.left_up()
         elif action == MOUSE_RIGHT:
             self._mouse.right_up()
+        elif action == MOUSE_MIDDLE:
+            self._mouse.middle_up()
+        elif action in (WHEEL_UP, WHEEL_DOWN):
+            return                       # 按下时已经滚过，松开无事可做
         else:
             self._keyboard.release(action)
 

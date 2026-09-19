@@ -5,10 +5,10 @@
   "mappings": {
     "0": "enter",
     "1": "escape",
-    "2": "backspace",
+    "2": "ctrl_l+w",
     "3": "tab",
-    "4": "shift+tab",
-    "5": "tab",
+    "4": "@mouse:left",
+    "5": "@mouse:right",
     "8": "cmd+tab",
     "12": "up",
     "13": "down",

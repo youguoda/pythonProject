@@ -18,6 +18,10 @@ class KeyboardOutput:
     @staticmethod
     def _resolve_key(key_name: str):
         aliases = {
+            # pynput 叫 Key.esc，而 profile 与 Qt 侧写的都是 escape。
+            # 少了这条，6 个方案的 B / X 键（拒绝 / 软打断）会在 press 时
+            # 抛 ValueError —— 候选 3 之前还是被静默吞掉的。
+            "escape": "esc",
             "pageup": "page_up",
             "pagedown": "page_down",
             "win": "cmd",

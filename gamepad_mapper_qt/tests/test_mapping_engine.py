@@ -257,3 +257,50 @@ def test_同一个坏键只上报一次():
 
     assert len(错误) == 1
     assert "foobar" in 错误[0]
+
+
+# ---------- 扩展的鼠标动作 ----------
+
+class 假鼠标2(假鼠标):
+    def middle_down(self):
+        self.日志.append(("middle_down",))
+
+    def middle_up(self):
+        self.日志.append(("middle_up",))
+
+
+def _带中键的引擎():
+    kb, ms = 假键盘(), 假鼠标2()
+    eng = MappingEngine(kb, ms)
+    eng.set_mouse_settings(20.0, 0.15, 0.35)
+    eng.start_mapping()
+    kb.日志.clear(); ms.日志.clear()
+    return eng, kb, ms
+
+
+def test_中键哨兵按下抬起():
+    from core.constants import MOUSE_MIDDLE
+    eng, kb, ms = _带中键的引擎()
+    eng.set_mappings({0: MOUSE_MIDDLE})
+
+    eng.consume(_帧(just_pressed=frozenset({0})))
+    eng.consume(_帧(just_released=frozenset({0})))
+
+    assert ms.日志 == [("middle_down",), ("middle_up",)]
+    assert kb.日志 == []
+
+
+def test_滚轮哨兵按下时滚一格_松开不动():
+    """滚轮没有「按住」的概念，按下滚一格即可"""
+    from core.constants import WHEEL_UP, WHEEL_DOWN
+    eng, kb, ms = _带中键的引擎()
+    eng.set_mappings({0: WHEEL_UP, 1: WHEEL_DOWN})
+
+    eng.consume(_帧(just_pressed=frozenset({0, 1})))
+    按下后 = list(ms.日志)
+    ms.日志.clear()
+    eng.consume(_帧(just_released=frozenset({0, 1})))
+
+    assert ("wheel", 1.0) in 按下后
+    assert ("wheel", -1.0) in 按下后
+    assert ms.日志 == [], "松开滚轮不该再滚"

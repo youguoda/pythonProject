@@ -13,6 +13,9 @@ PROFILE_ORDER = [
 # 特殊映射动作（非键盘）
 MOUSE_LEFT = "@mouse:left"
 MOUSE_RIGHT = "@mouse:right"
+MOUSE_MIDDLE = "@mouse:middle"
+WHEEL_UP = "@wheel:up"
+WHEEL_DOWN = "@wheel:down"
 VOICE_KEY = "ctrl_r"
 
 # 全方案统一的鼠标层（左摇杆移动 / 右摇杆滚轮在引擎内；此处为 L3/R3）

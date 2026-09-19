@@ -8,6 +8,8 @@ MOUSE_LEFT_DOWN = 0x0002
 MOUSE_LEFT_UP = 0x0004
 MOUSE_RIGHT_DOWN = 0x0008
 MOUSE_RIGHT_UP = 0x0010
+MOUSE_MIDDLE_DOWN = 0x0020
+MOUSE_MIDDLE_UP = 0x0040
 MOUSE_WHEEL = 0x0800
 
 
@@ -34,6 +36,12 @@ class MouseOutput:
 
     def right_up(self) -> None:
         self._user32.mouse_event(MOUSE_RIGHT_UP, 0, 0, 0, 0)
+
+    def middle_down(self) -> None:
+        self._user32.mouse_event(MOUSE_MIDDLE_DOWN, 0, 0, 0, 0)
+
+    def middle_up(self) -> None:
+        self._user32.mouse_event(MOUSE_MIDDLE_UP, 0, 0, 0, 0)
 
     def wheel(self, delta: float) -> None:
         if delta:

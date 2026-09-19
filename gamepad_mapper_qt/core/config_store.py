@@ -6,6 +6,7 @@ import os
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional
 
+from core import paths
 from core.constants import (
     CONFIG_DIR,
     DEFAULT_MOUSE_SENSITIVITY,
@@ -58,7 +59,8 @@ def effective_mappings(profile: HarnessProfile) -> Dict[int, str]:
 
 
 def _base_dir() -> str:
-    return os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    # 走 paths：打包后必须是 exe 所在目录，否则配置写进临时解压目录、退出即失
+    return paths.app_dir()
 
 
 def _profiles_dir() -> str:

@@ -394,3 +394,31 @@ QMessageBox QPushButton {
     font-size: 14px;
     min-width: 80px;
 }
+
+QDialog QLineEdit#searchBox {
+    background-color: #1a1a2e;
+    border: 1px solid #4a4a6a;
+    border-radius: 8px;
+    padding: 8px 12px;
+    color: #e6e6f2;
+    font-size: 14px;
+}
+QDialog QLineEdit#searchBox:focus { border-color: #00d4aa; }
+
+QDialog QTreeWidget#catalogTree {
+    background-color: #1a1a2e;
+    border: 1px solid #4a4a6a;
+    border-radius: 10px;
+    color: #c8c8dc;
+    font-size: 14px;
+    outline: none;
+}
+QDialog QTreeWidget#catalogTree::item { padding: 5px 4px; }
+QDialog QTreeWidget#catalogTree::item:selected {
+    background-color: #00d4aa;
+    color: #12121f;
+    border-radius: 4px;
+}
+QDialog QTreeWidget#catalogTree::item:hover { background-color: #353555; }
+
+QDialog QLabel#keyDisplay { font-size: 26px; padding: 16px 32px; }

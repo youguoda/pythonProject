@@ -22,8 +22,8 @@
     "8": "ctrl+w",
     "12": "pageup",
     "13": "pagedown",
-    "14": "alt+left",
-    "15": "alt+right"
+    "14": "left",
+    "15": "right"
   },
   "threshold": 0.5,
   "mouse_sensitivity": 20.0,

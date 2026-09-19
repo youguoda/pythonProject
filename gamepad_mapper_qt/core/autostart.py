@@ -1,26 +1,21 @@
 # -*- coding: utf-8 -*-
 """Windows 开机自启动（当前用户注册表）"""
 
-import os
 import sys
+
+from core import paths
 
 APP_REG_NAME = "GamepadVibeController"
 _RUN_KEY = r"Software\Microsoft\Windows\CurrentVersion\Run"
 
 
-def _project_root() -> str:
-    return os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-
-
 def build_launch_command() -> str:
-    """生成无控制台窗口的启动命令"""
-    main_py = os.path.join(_project_root(), "main.py")
-    exe = sys.executable
-    if exe.lower().endswith("python.exe"):
-        pythonw = os.path.join(os.path.dirname(exe), "pythonw.exe")
-        if os.path.isfile(pythonw):
-            exe = pythonw
-    return f'"{exe}" "{main_py}"'
+    """生成开机自启的命令
+
+    打包后是 exe 自己；源码运行时是 pythonw + main.py（避免黑框）。
+    两种情况的差别由 paths.launch_target 负责。
+    """
+    return paths.launch_target()
 
 
 def is_supported() -> bool:

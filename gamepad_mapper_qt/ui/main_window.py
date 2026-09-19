@@ -16,6 +16,7 @@ from core.constants import (
     APP_NAME, APP_VERSION, THEME,
     LT_LONG_PRESS_SEC, PROFILE_ORDER,
 )
+from core import paths
 from core.active_profile import ActiveProfile
 from core.slots import CONFLICT, binding_kind, conflict_reason
 from core.autostart import (
@@ -40,6 +41,7 @@ from core.keyboard_output import KeyboardOutput
 from core.mapping_engine import MappingEngine
 from core.mouse_output import MouseOutput
 from core.window_focus import focus_process, is_process_foreground
+from ui.tray import Tray
 from ui.widgets.gamepad_panel import GamepadPanel
 from ui.widgets.mapping_table import MappingTable
 from ui.widgets.status_bar import StatusBar
@@ -67,6 +69,7 @@ class MainWindow(QMainWindow):
         self._app_state = AppState()
         self._frame_count = 0
         self._reported_refusals: set[str] = set()
+        self._really_quitting = False      # 区分「关窗口」和「真退出」
 
         self._load_styles()
         self._setup_ui()
@@ -81,12 +84,30 @@ class MainWindow(QMainWindow):
         self._poll_timer.timeout.connect(self._tick)
         self._poll_timer.start(16)
 
+        self._tray = Tray(self)
+        self._tray.show_requested.connect(self._restore_from_tray)
+        self._tray.toggle_mapping_requested.connect(self._toggle_mapping)
+        self._tray.quit_requested.connect(self._quit_for_real)
+        self._engine.state_changed.connect(self._tray.set_running)
+        self._tray.show()
+
         QTimer.singleShot(800, self._try_auto_start_mapping)
 
+    # ---------- 托盘 ----------
+
+    def _restore_from_tray(self):
+        self.showNormal()
+        self.raise_()
+        self.activateWindow()
+
+    def _quit_for_real(self):
+        """托盘菜单的「退出」—— 只有这条路和 F9 之外的真退出才会关进程"""
+        self._really_quitting = True
+        self.close()
+
     def _load_styles(self):
-        style_path = os.path.join(
-            os.path.dirname(os.path.abspath(__file__)), "styles", "theme.qss"
-        )
+        # 走 paths：打包后 qss 在 bundle 里，位置由 PyInstaller 决定
+        style_path = paths.resource_path("ui", "styles", "theme.qss")
         if os.path.isfile(style_path):
             with open(style_path, "r", encoding="utf-8") as f:
                 self.setStyleSheet(f.read())
@@ -571,9 +592,18 @@ class MainWindow(QMainWindow):
         self._update_gate_display()
 
     def closeEvent(self, event):
+        # 点 × 只收进托盘：映射还在跑，关掉窗口不该把它一起关了。
+        # 真退出只能走托盘菜单的「退出」。
+        if not self._really_quitting:
+            event.ignore()
+            self.hide()
+            self._tray.notify("已收到托盘，映射继续运行；双击图标可恢复窗口")
+            return
+
         self._poll_timer.stop()
         self._engine.stop_mapping()
         self._engine.terminate_engine()
         self._save_app_settings()
         self._joystick.shutdown()
+        self._tray.hide()
         event.accept()
